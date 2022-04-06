@@ -127,11 +127,11 @@
 # export HBASE_MANAGES_ZK=true
 
 # The default log rolling policy is RFA, where the log file is rolled as per the size defined for the 
-# RFA appender. Please refer to the log4j.properties file to see more details on this appender.
+# RFA appender. Please refer to the log4j2.properties file to see more details on this appender.
 # In case one needs to do log rolling on a date change, one should set the environment property
 # HBASE_ROOT_LOGGER to "<DESIRED_LOG LEVEL>,DRFA".
 # For example:
-# HBASE_ROOT_LOGGER=INFO,DRFA
+# export HBASE_ROOT_LOGGER=INFO,DRFA
 # The reason for changing default to RFA is to avoid the boundary case of filling out disk space as 
 # DRFA doesn't put any cap on the log size. Please refer to HBase-5655 for more context.
 
@@ -143,10 +143,32 @@
 # export GREP="${GREP-grep}"
 # export SED="${SED-sed}"
 
-# Uncomment to enable trace, you can change the options to use other exporters such as jaeger or
-# zipkin. See https://github.com/open-telemetry/opentelemetry-java-instrumentation on how to
+# Tracing
+# Uncomment some combination of these lines to enable tracing. You should change the options to use
+# the exporters appropriate to your environment. See
+# https://github.com/open-telemetry/opentelemetry-java-instrumentation for details on how to
 # configure exporters and other components through system properties.
-# export HBASE_TRACE_OPTS="-Dotel.resource.attributes=service.name=HBase -Dotel.traces.exporter=logging otel.metrics.exporter=none"
+#
+# The presence HBASE_TRACE_OPTS indicates that tracing should be enabled, and serves as site-wide
+# settings.
+# export HBASE_TRACE_OPTS="-Dotel.traces.exporter=none -Dotel.metrics.exporter=none"
+#
+# Per-process configuration variables allow for fine-grained configuration control.
+# export HBASE_SHELL_OPTS="${HBASE_SHELL_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-shell"
+# export HBASE_JSHELL_OPTS="${HBASE_JSHELL_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-jshell"
+# export HBASE_HBCK_OPTS="${HBASE_HBCK_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-hbck"
+# export HBASE_MASTER_OPTS="${HBASE_MASTER_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-master"
+# export HBASE_REGIONSERVER_OPTS="${HBASE_REGIONSERVER_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-regionserver"
+# export HBASE_THRIFT_OPTS="${HBASE_THRIFT_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-thrift"
+# export HBASE_REST_OPTS="${HBASE_REST_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-rest"
+# export HBASE_ZOOKEEPER_OPTS="${HBASE_ZOOKEEPER_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-zookeeper"
+# export HBASE_PE_OPTS="${HBASE_PE_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-performanceevaluation"
+# export HBASE_LTT_OPTS="${HBASE_LTT_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-loadtesttool"
+# export HBASE_CANARY_OPTS="${HBASE_CANARY_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-canary"
+# export HBASE_HBTOP_OPTS="${HBASE_HBTOP_OPTS} ${HBASE_TRACE_OPTS} -Dotel.resource.attributes=service.name=hbase-hbtop"
+#
+# Manually specify a value for OPENTELEMETRY_JAVAAGENT_PATH to override the autodiscovery mechanism
+# export OPENTELEMETRY_JAVAAGENT_PATH=""
 
 # Additional argments passed to jshell invocation
 # export HBASE_JSHELL_ARGS="--startup DEFAULT --startup PRINTING --startup hbase_startup.jsh"

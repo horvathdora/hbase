@@ -18,6 +18,9 @@
 
 package org.apache.hadoop.hbase.regionserver;
 
+import java.util.Collections;
+import java.util.List;
+
 public class MetricsRegionServerWrapperStub implements MetricsRegionServerWrapper {
 
   @Override
@@ -137,6 +140,11 @@ public class MetricsRegionServerWrapperStub implements MetricsRegionServerWrappe
 
   @Override
   public long getByteBuffAllocatorUsedBufferCount() {
+    return 0;
+  }
+
+  @Override
+  public int getActiveScanners() {
     return 0;
   }
 
@@ -373,6 +381,11 @@ public class MetricsRegionServerWrapperStub implements MetricsRegionServerWrappe
   @Override
   public long getWALFileSize() {
     return 1024000;
+  }
+
+  @Override
+  public List<String> getWALExcludeDNs() {
+    return Collections.emptyList();
   }
 
   @Override

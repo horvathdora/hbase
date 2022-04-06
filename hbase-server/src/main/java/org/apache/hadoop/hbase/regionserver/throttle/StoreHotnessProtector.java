@@ -30,7 +30,6 @@ import org.apache.hadoop.hbase.regionserver.Store;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.ClassSize;
 import org.apache.yetus.audience.InterfaceAudience;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,6 +62,9 @@ import org.slf4j.LoggerFactory;
 @InterfaceAudience.Private
 public class StoreHotnessProtector {
   private static final Logger LOG = LoggerFactory.getLogger(StoreHotnessProtector.class);
+
+  private static volatile boolean loggedDisableMessage;
+
   private volatile int parallelPutToStoreThreadLimit;
 
   private volatile int parallelPreparePutToStoreThreadLimit;
@@ -70,7 +72,7 @@ public class StoreHotnessProtector {
       "hbase.region.store.parallel.put.limit";
   public final static String PARALLEL_PREPARE_PUT_STORE_MULTIPLIER =
       "hbase.region.store.parallel.prepare.put.multiplier";
-  private final static int DEFAULT_PARALLEL_PUT_STORE_THREADS_LIMIT = 10;
+  private final static int DEFAULT_PARALLEL_PUT_STORE_THREADS_LIMIT = 0;
   private volatile int parallelPutToStoreThreadLimitCheckMinColumnCount;
   public final static String PARALLEL_PUT_STORE_THREADS_LIMIT_MIN_COLUMN_COUNT =
       "hbase.region.store.parallel.put.limit.min.column.count";
@@ -95,6 +97,24 @@ public class StoreHotnessProtector {
         conf.getInt(PARALLEL_PUT_STORE_THREADS_LIMIT_MIN_COLUMN_COUNT,
             DEFAULT_PARALLEL_PUT_STORE_THREADS_LIMIT_MIN_COLUMN_NUM);
 
+    if (!isEnable()) {
+      logDisabledMessageOnce();
+    }
+  }
+
+  /**
+   * {@link #init(Configuration)} is called for every Store that opens on a RegionServer.
+   * Here we make a lightweight attempt to log this message once per RegionServer, rather than
+   * per-Store. The goal is just to draw attention to this feature if debugging overload due to
+   * heavy writes.
+   */
+  private static void logDisabledMessageOnce() {
+    if (!loggedDisableMessage) {
+      LOG.info("StoreHotnessProtector is disabled. Set {} > 0 to enable, "
+          + "which may help mitigate load under heavy write pressure.",
+        PARALLEL_PUT_STORE_THREADS_LIMIT);
+      loggedDisableMessage = true;
+    }
   }
 
   public void update(Configuration conf) {
@@ -109,6 +129,8 @@ public class StoreHotnessProtector {
     }
 
     String tooBusyStore = null;
+    boolean aboveParallelThreadLimit = false;
+    boolean aboveParallelPrePutLimit = false;
 
     for (Map.Entry<byte[], List<Cell>> e : familyMaps.entrySet()) {
       Store store = this.region.getStore(e.getKey());
@@ -123,12 +145,16 @@ public class StoreHotnessProtector {
         int preparePutCount = preparePutToStoreMap
             .computeIfAbsent(e.getKey(), key -> new AtomicInteger())
             .incrementAndGet();
-        if (store.getCurrentParallelPutCount() > this.parallelPutToStoreThreadLimit
-            || preparePutCount > this.parallelPreparePutToStoreThreadLimit) {
+        boolean storeAboveThread =
+          store.getCurrentParallelPutCount() > this.parallelPutToStoreThreadLimit;
+        boolean storeAbovePrePut = preparePutCount > this.parallelPreparePutToStoreThreadLimit;
+        if (storeAboveThread || storeAbovePrePut) {
           tooBusyStore = (tooBusyStore == null ?
               store.getColumnFamilyName() :
               tooBusyStore + "," + store.getColumnFamilyName());
         }
+        aboveParallelThreadLimit |= storeAboveThread;
+        aboveParallelPrePutLimit |= storeAbovePrePut;
 
         if (LOG.isTraceEnabled()) {
           LOG.trace(store.getColumnFamilyName() + ": preparePutCount=" + preparePutCount
@@ -137,10 +163,15 @@ public class StoreHotnessProtector {
       }
     }
 
-    if (tooBusyStore != null) {
+    if (aboveParallelThreadLimit || aboveParallelPrePutLimit) {
       String msg =
           "StoreTooBusy," + this.region.getRegionInfo().getRegionNameAsString() + ":" + tooBusyStore
-              + " Above parallelPutToStoreThreadLimit(" + this.parallelPutToStoreThreadLimit + ")";
+              + " Above "
+              + (aboveParallelThreadLimit ? "parallelPutToStoreThreadLimit("
+              + this.parallelPutToStoreThreadLimit + ")" : "")
+              + (aboveParallelThreadLimit && aboveParallelPrePutLimit ? " or " : "")
+              + (aboveParallelPrePutLimit ? "parallelPreparePutToStoreThreadLimit("
+              + this.parallelPreparePutToStoreThreadLimit + ")" : "");
       LOG.trace(msg);
       throw new RegionTooBusyException(msg);
     }

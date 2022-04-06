@@ -23,7 +23,7 @@
   <parent>
     <artifactId>hbase-build-configuration</artifactId>
     <groupId>org.apache.hbase</groupId>
-    <version>3.0.0-alpha-2-SNAPSHOT</version>
+    <version>3.0.0-alpha-3-SNAPSHOT</version>
     <relativePath>../hbase-build-configuration</relativePath>
   </parent>
   <artifactId>hbase-assembly</artifactId>
@@ -53,6 +53,7 @@
                 <debug-print-included-work-info>${license.debug.print.included}</debug-print-included-work-info>
                 <bundled-dependencies>${license.bundles.dependencies}</bundled-dependencies>
                 <bundled-jquery>${license.bundles.jquery}</bundled-jquery>
+                <bundled-vega>${license.bundles.vega}</bundled-vega>
                 <bundled-logo>${license.bundles.logo}</bundled-logo>
                 <bundled-bootstrap>${license.bundles.bootstrap}</bundled-bootstrap>
               </properties>
@@ -310,6 +311,26 @@
       <artifactId>hbase-hbtop</artifactId>
     </dependency>
     <dependency>
+      <groupId>org.apache.hbase</groupId>
+      <artifactId>hbase-compression-aircompressor</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hbase</groupId>
+      <artifactId>hbase-compression-lz4</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hbase</groupId>
+      <artifactId>hbase-compression-snappy</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hbase</groupId>
+      <artifactId>hbase-compression-xz</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hbase</groupId>
+      <artifactId>hbase-compression-zstd</artifactId>
+    </dependency>
+    <dependency>
       <groupId>jline</groupId>
       <artifactId>jline</artifactId>
     </dependency>
@@ -352,6 +373,17 @@
       <groupId>io.opentelemetry.javaagent</groupId>
       <artifactId>opentelemetry-javaagent</artifactId>
       <classifier>all</classifier>
+    </dependency>
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <!-- Making it compile here so that it can be downloaded during packaging. -->
+      <!-- All other modules scope it as test or inherit test scope from parent pom.  -->
+      <scope>compile</scope>
     </dependency>
   </dependencies>
 </project>

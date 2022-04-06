@@ -464,6 +464,7 @@ public class StoreScanner extends NonReversedNonLazyKeyValueScanner
     for (KeyValueScanner kvs : allScanners) {
       boolean isFile = kvs.isFileScanner();
       if ((!isFile && filesOnly) || (isFile && memOnly)) {
+        kvs.close();
         continue;
       }
 
@@ -626,22 +627,11 @@ public class StoreScanner extends NonReversedNonLazyKeyValueScanner
           case INCLUDE:
           case INCLUDE_AND_SEEK_NEXT_ROW:
           case INCLUDE_AND_SEEK_NEXT_COL:
-
             Filter f = matcher.getFilter();
             if (f != null) {
               cell = f.transformCell(cell);
             }
             this.countPerRow++;
-            if (storeLimit > -1 && this.countPerRow > (storeLimit + storeOffset)) {
-              // do what SEEK_NEXT_ROW does.
-              if (!matcher.moreRowsMayExistAfter(cell)) {
-                close(false);// Do all cleanup except heap.close()
-                return scannerContext.setScannerState(NextState.NO_MORE_VALUES).hasMoreValues();
-              }
-              matcher.clearCurrentRow();
-              seekToNextRow(cell);
-              break LOOP;
-            }
 
             // add to results only if we have skipped #storeOffset kvs
             // also update metric accordingly
@@ -669,6 +659,17 @@ public class StoreScanner extends NonReversedNonLazyKeyValueScanner
                     + store.getHRegion().getRegionInfo().getRegionNameAsString();
                 LOG.warn(message);
                 throw new RowTooBigException(message);
+              }
+
+              if (storeLimit > -1 && this.countPerRow >= (storeLimit + storeOffset)) {
+                // do what SEEK_NEXT_ROW does.
+                if (!matcher.moreRowsMayExistAfter(cell)) {
+                  close(false);// Do all cleanup except heap.close()
+                  return scannerContext.setScannerState(NextState.NO_MORE_VALUES).hasMoreValues();
+                }
+                matcher.clearCurrentRow();
+                seekToNextRow(cell);
+                break LOOP;
               }
             }
 
@@ -754,6 +755,11 @@ public class StoreScanner extends NonReversedNonLazyKeyValueScanner
 
           default:
             throw new RuntimeException("UNEXPECTED");
+        }
+
+        // when reaching the heartbeat cells, try to return from the loop.
+        if (kvsScanned % cellsPerHeartbeatCheck == 0) {
+          return scannerContext.setScannerState(NextState.MORE_VALUES).hasMoreValues();
         }
       } while ((cell = this.heap.peek()) != null);
 

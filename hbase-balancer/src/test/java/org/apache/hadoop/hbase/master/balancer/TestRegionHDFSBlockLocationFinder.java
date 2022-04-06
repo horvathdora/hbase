@@ -19,6 +19,7 @@ package org.apache.hadoop.hbase.master.balancer;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -31,12 +32,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.TreeMap;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.ClusterMetrics;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HDFSBlocksDistribution;
 import org.apache.hadoop.hbase.HDFSBlocksDistribution.HostAndWeight;
+import org.apache.hadoop.hbase.RegionMetrics;
 import org.apache.hadoop.hbase.ServerMetrics;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.TableName;
@@ -60,8 +63,8 @@ public class TestRegionHDFSBlockLocationFinder {
   public static final HBaseClassTestRule CLASS_RULE =
     HBaseClassTestRule.forClass(TestRegionHDFSBlockLocationFinder.class);
 
+  private static final Random RNG = new Random(); // This test depends on Random#setSeed
   private static TableDescriptor TD;
-
   private static List<RegionInfo> REGIONS;
 
   private RegionHDFSBlockLocationFinder finder;
@@ -69,10 +72,10 @@ public class TestRegionHDFSBlockLocationFinder {
   private static HDFSBlocksDistribution generate(RegionInfo region) {
     HDFSBlocksDistribution distribution = new HDFSBlocksDistribution();
     int seed = region.hashCode();
-    Random rand = new Random(seed);
-    int size = 1 + rand.nextInt(10);
+    RNG.setSeed(seed);
+    int size = 1 + RNG.nextInt(10);
     for (int i = 0; i < size; i++) {
-      distribution.addHostsAndBlockWeight(new String[] { "host-" + i }, 1 + rand.nextInt(100));
+      distribution.addHostsAndBlockWeight(new String[] { "host-" + i }, 1 + RNG.nextInt(100));
     }
     return distribution;
   }
@@ -203,5 +206,70 @@ public class TestRegionHDFSBlockLocationFinder {
         previousWeight = weight;
       }
     }
+  }
+
+  @Test
+  public void testRefreshRegionsWithChangedLocality() throws InterruptedException {
+    ServerName testServer = ServerName.valueOf("host-0", 12345, 12345);
+    RegionInfo testRegion = REGIONS.get(0);
+
+    Map<RegionInfo, HDFSBlocksDistribution> cache = new HashMap<>();
+    for (RegionInfo region : REGIONS) {
+      HDFSBlocksDistribution hbd = finder.getBlockDistribution(region);
+      assertHostAndWeightEquals(generate(region), hbd);
+      cache.put(region, hbd);
+    }
+
+    finder.setClusterMetrics(getMetricsWithLocality(testServer, testRegion.getRegionName(),
+      0.123f));
+
+    // everything should be cached, because metrics were null before
+    for (RegionInfo region : REGIONS) {
+      HDFSBlocksDistribution hbd = finder.getBlockDistribution(region);
+      assertSame(cache.get(region), hbd);
+    }
+
+    finder.setClusterMetrics(getMetricsWithLocality(testServer, testRegion.getRegionName(),
+      0.345f));
+
+    // cache refresh happens in a background thread, so we need to wait for the value to
+    // update before running assertions.
+    long now = System.currentTimeMillis();
+    HDFSBlocksDistribution cached = cache.get(testRegion);
+    HDFSBlocksDistribution newValue;
+    do {
+      Thread.sleep(1_000);
+      newValue = finder.getBlockDistribution(testRegion);
+    } while (cached == newValue && System.currentTimeMillis() - now < 30_000);
+
+    // locality changed just for our test region, so it should no longer be the same
+    for (RegionInfo region : REGIONS) {
+      HDFSBlocksDistribution hbd = finder.getBlockDistribution(region);
+      if (region.equals(testRegion)) {
+        assertNotSame(cache.get(region), hbd);
+      } else {
+        assertSame(cache.get(region), hbd);
+      }
+    }
+  }
+
+  private ClusterMetrics getMetricsWithLocality(ServerName serverName, byte[] region,
+    float locality) {
+    RegionMetrics regionMetrics = mock(RegionMetrics.class);
+    when(regionMetrics.getDataLocality()).thenReturn(locality);
+
+    Map<byte[], RegionMetrics> regionMetricsMap = new TreeMap<>(Bytes.BYTES_COMPARATOR);
+    regionMetricsMap.put(region, regionMetrics);
+
+    ServerMetrics serverMetrics = mock(ServerMetrics.class);
+    when(serverMetrics.getRegionMetrics()).thenReturn(regionMetricsMap);
+
+    Map<ServerName, ServerMetrics> serverMetricsMap = new HashMap<>();
+    serverMetricsMap.put(serverName, serverMetrics);
+
+    ClusterMetrics metrics = mock(ClusterMetrics.class);
+    when(metrics.getLiveServerMetrics()).thenReturn(serverMetricsMap);
+
+    return metrics;
   }
 }

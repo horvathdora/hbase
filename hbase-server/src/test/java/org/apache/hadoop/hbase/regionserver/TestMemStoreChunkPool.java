@@ -28,6 +28,7 @@ import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.hadoop.conf.Configuration;
@@ -87,7 +88,6 @@ public class TestMemStoreChunkPool {
 
   @Test
   public void testReusingChunks() {
-    Random rand = new Random();
     MemStoreLAB mslab = new MemStoreLABImpl(conf);
     int expectedOff = 0;
     ByteBuffer lastBuffer = null;
@@ -95,6 +95,7 @@ public class TestMemStoreChunkPool {
     final byte[] cf = Bytes.toBytes("f");
     final byte[] q = Bytes.toBytes("q");
     // Randomly allocate some bytes
+    final Random rand = ThreadLocalRandom.current();
     for (int i = 0; i < 100; i++) {
       int valSize = rand.nextInt(1000);
       KeyValue kv = new KeyValue(rk, cf, q, new byte[valSize]);
@@ -312,7 +313,7 @@ public class TestMemStoreChunkPool {
       assertEquals(initialCount, newCreator.getPoolSize());
       assertEquals(0, newCreator.getPoolSize(ChunkType.INDEX_CHUNK));
 
-      Chunk dataChunk = newCreator.getChunk(CompactingMemStore.IndexType.CHUNK_MAP);
+      Chunk dataChunk = newCreator.getChunk();
       assertTrue(dataChunk.isDataChunk());
       assertTrue(dataChunk.isFromPool());
       assertEquals(initialCount - 1, newCreator.getPoolSize());
@@ -323,7 +324,7 @@ public class TestMemStoreChunkPool {
 
       // We set ChunkCreator.indexChunkSize to 0, but we want to get a IndexChunk
       try {
-        newCreator.getChunk(CompactingMemStore.IndexType.CHUNK_MAP, ChunkType.INDEX_CHUNK);
+        newCreator.getChunk(ChunkType.INDEX_CHUNK);
         fail();
       } catch (IllegalArgumentException e) {
       }
@@ -350,7 +351,7 @@ public class TestMemStoreChunkPool {
       assertEquals(0, newCreator.getPoolSize());
       assertEquals(0, newCreator.getPoolSize(ChunkType.INDEX_CHUNK));
 
-      dataChunk = newCreator.getChunk(CompactingMemStore.IndexType.CHUNK_MAP);
+      dataChunk = newCreator.getChunk();
       assertTrue(dataChunk.isDataChunk());
       assertTrue(!dataChunk.isFromPool());
       assertEquals(0, newCreator.getPoolSize());
@@ -358,7 +359,7 @@ public class TestMemStoreChunkPool {
 
       try {
         // We set ChunkCreator.indexChunkSize to 0, but we want to get a IndexChunk
-        newCreator.getChunk(CompactingMemStore.IndexType.CHUNK_MAP, ChunkType.INDEX_CHUNK);
+        newCreator.getChunk(ChunkType.INDEX_CHUNK);
         fail();
       } catch (IllegalArgumentException e) {
       }
@@ -387,14 +388,14 @@ public class TestMemStoreChunkPool {
       assertEquals(0, newCreator.getPoolSize());
       assertEquals(initialCount, newCreator.getPoolSize(ChunkType.INDEX_CHUNK));
 
-      dataChunk = newCreator.getChunk(CompactingMemStore.IndexType.CHUNK_MAP);
+      dataChunk = newCreator.getChunk();
       assertTrue(dataChunk.isDataChunk());
       assertTrue(!dataChunk.isFromPool());
       assertEquals(0, newCreator.getPoolSize());
       assertEquals(initialCount, newCreator.getPoolSize(ChunkType.INDEX_CHUNK));
 
       Chunk indexChunk =
-          newCreator.getChunk(CompactingMemStore.IndexType.CHUNK_MAP, ChunkType.INDEX_CHUNK);
+          newCreator.getChunk(ChunkType.INDEX_CHUNK);
       assertEquals(0, newCreator.getPoolSize());
       assertEquals(initialCount - 1, newCreator.getPoolSize(ChunkType.INDEX_CHUNK));
       assertTrue(indexChunk.isIndexChunk());
@@ -415,10 +416,10 @@ public class TestMemStoreChunkPool {
     // Test both dataChunksPool and indexChunksPool are not null
     assertTrue(ChunkCreator.getInstance().getDataChunksPool() != null);
     assertTrue(ChunkCreator.getInstance().getIndexChunksPool() != null);
-    Chunk dataChunk = ChunkCreator.getInstance().getChunk(CompactingMemStore.IndexType.CHUNK_MAP);
+    Chunk dataChunk = ChunkCreator.getInstance().getChunk();
     assertTrue(dataChunk.isDataChunk());
     assertTrue(dataChunk.isFromPool());
-    Chunk indexChunk = ChunkCreator.getInstance().getChunk(CompactingMemStore.IndexType.CHUNK_MAP,
+    Chunk indexChunk = ChunkCreator.getInstance().getChunk(
       ChunkType.INDEX_CHUNK);
     assertTrue(indexChunk.isIndexChunk());
     assertTrue(indexChunk.isFromPool());

@@ -115,6 +115,22 @@ function personality_parse_args
         delete_parameter "${i}"
         SKIP_ERRORPRONE=true
       ;;
+      --asf-nightlies-general-check-base=*)
+        delete_parameter "${i}"
+        ASF_NIGHTLIES_GENERAL_CHECK_BASE=${i#*=}
+      ;;
+      --build-thread=*)
+        delete_parameter "${i}"
+        BUILD_THREAD=${i#*=}
+      ;;
+      --surefire-first-part-fork-count=*)
+        delete_parameter "${i}"
+        SUREFIRE_FIRST_PART_FORK_COUNT=${i#*=}
+      ;;
+      --surefire-second-part-fork-count=*)
+        delete_parameter "${i}"
+        SUREFIRE_SECOND_PART_FORK_COUNT=${i#*=}
+      ;;
     esac
   done
 }
@@ -140,7 +156,19 @@ function personality_modules
   # At a few points, hbase modules can run build, test, etc. in parallel
   # Let it happen. Means we'll use more CPU but should be for short bursts.
   # https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3
-  extra="--threads=2 -DHBasePatchProcess"
+  if [[ -n "${BUILD_THREAD}" ]]; then
+    extra="--threads=${BUILD_THREAD}"
+  else
+    extra="--threads=2"
+  fi
+
+  # Set java.io.tmpdir to avoid exhausting the /tmp space
+  # Just simply set to 'target', it is not very critical so we do not care
+  # whether it is placed in the root directory or a sub module's directory
+  # let's make it absolute
+  tmpdir=$(realpath target)
+  extra="${extra} -Djava.io.tmpdir=${tmpdir} -DHBasePatchProcess"
+
   if [[ "${PATCH_BRANCH}" = branch-1* ]]; then
     extra="${extra} -Dhttps.protocols=TLSv1.2"
   fi
@@ -226,6 +254,15 @@ function personality_modules
     # Used by zombie detection stuff, even though we're not including that yet.
     if [ -n "${BUILD_ID}" ]; then
       extra="${extra} -Dbuild.id=${BUILD_ID}"
+    fi
+
+    # set forkCount
+    if [[ -n "${SUREFIRE_FIRST_PART_FORK_COUNT}" ]]; then
+      extra="${extra} -Dsurefire.firstPartForkCount=${SUREFIRE_FIRST_PART_FORK_COUNT}"
+    fi
+
+    if [[ -n "${SUREFIRE_SECOND_PART_FORK_COUNT}" ]]; then
+      extra="${extra} -Dsurefire.secondPartForkCount=${SUREFIRE_SECOND_PART_FORK_COUNT}"
     fi
 
     # If the set of changed files includes CommonFSUtils then add the hbase-server
@@ -414,7 +451,11 @@ function refguide_rebuild
   fi
 
   add_vote_table 0 refguide "${repostatus} has no errors when building the reference guide. See footer for rendered docs, which you should manually inspect."
-  add_footer_table refguide "@@BASE@@/${repostatus}-site/book.html"
+  if [[ -n "${ASF_NIGHTLIES_GENERAL_CHECK_BASE}" ]]; then
+    add_footer_table refguide "${ASF_NIGHTLIES_GENERAL_CHECK_BASE}/${repostatus}-site/book.html"
+  else
+    add_footer_table refguide "@@BASE@@/${repostatus}-site/book.html"
+  fi
   return 0
 }
 
@@ -591,9 +632,9 @@ function hadoopcheck_rebuild
   elif [[ "${PATCH_BRANCH}" = branch-2.* ]]; then
     yetus_info "Setting Hadoop 2 versions to test based on branch-2.3+ rules."
     if [[ "${QUICK_HADOOPCHECK}" == "true" ]]; then
-      hbase_hadoop2_versions="2.10.0"
+      hbase_hadoop2_versions="2.10.1"
     else
-      hbase_hadoop2_versions="2.10.0"
+      hbase_hadoop2_versions="2.10.0 2.10.1"
     fi
   else
     yetus_info "Setting Hadoop 2 versions to null on master/feature branch rules since we do not support hadoop 2 for hbase 3.x any more."
@@ -612,16 +653,16 @@ function hadoopcheck_rebuild
   elif [[ "${PATCH_BRANCH}" = branch-2.2 ]] || [[ "${PATCH_BRANCH}" = branch-2.3 ]]; then
     yetus_info "Setting Hadoop 3 versions to test based on branch-2.2/branch-2.3 rules"
     if [[ "${QUICK_HADOOPCHECK}" == "true" ]]; then
-      hbase_hadoop3_versions="3.1.2 3.2.1"
+      hbase_hadoop3_versions="3.1.2 3.2.2"
     else
-      hbase_hadoop3_versions="3.1.1 3.1.2 3.2.0 3.2.1"
+      hbase_hadoop3_versions="3.1.1 3.1.2 3.2.0 3.2.1 3.2.2"
     fi
   else
     yetus_info "Setting Hadoop 3 versions to test based on branch-2.4+/master/feature branch rules"
     if [[ "${QUICK_HADOOPCHECK}" == "true" ]]; then
-      hbase_hadoop3_versions="3.1.2 3.2.1 3.3.0"
+      hbase_hadoop3_versions="3.1.2 3.2.2 3.3.1"
     else
-      hbase_hadoop3_versions="3.1.1 3.1.2 3.2.0 3.2.1 3.3.0"
+      hbase_hadoop3_versions="3.1.1 3.1.2 3.2.0 3.2.1 3.2.2 3.3.0 3.3.1"
     fi
   fi
 
@@ -689,6 +730,14 @@ function hadoopcheck_rebuild
 
 # TODO if we need the protoc check, we probably need to check building all the modules that rely on hbase-protocol
 add_test_type hbaseprotoc
+
+function hbaseprotoc_initialize
+{
+  # So long as there are inter-module dependencies on the protoc modules, we
+  # need to run a full `mvn install` before a patch can be tested.
+  yetus_debug "initializing HBase Protoc plugin."
+  maven_add_install hbaseprotoc
+}
 
 ## @description  hbaseprotoc file filter
 ## @audience     private

@@ -317,7 +317,7 @@ public final class Encryption {
    */
   private static byte[] generateSecretKey(String algorithm, int keyLengthBytes, char[] password) {
     byte[] salt = new byte[keyLengthBytes];
-    Bytes.random(salt);
+    Bytes.secureRandom(salt);
     PBEKeySpec spec = new PBEKeySpec(password, salt, 10000, keyLengthBytes*8);
     try {
       return SecretKeyFactory.getInstance(algorithm).generateSecret(spec).getEncoded();
@@ -497,16 +497,17 @@ public final class Encryption {
    * @return a key for the given subject
    * @throws IOException if the key is not found
    */
-  public static Key getSecretKeyForSubject(String subject, Configuration conf)
-      throws IOException {
+  public static Key getSecretKeyForSubject(String subject, Configuration conf) throws IOException {
     KeyProvider provider = getKeyProvider(conf);
-    if (provider != null) try {
-      Key[] keys = provider.getKeys(new String[] { subject });
-      if (keys != null && keys.length > 0) {
-        return keys[0];
+    if (provider != null) {
+      try {
+        Key[] keys = provider.getKeys(new String[] { subject });
+        if (keys != null && keys.length > 0) {
+          return keys[0];
+        }
+      } catch (Exception e) {
+        throw new IOException(e);
       }
-    } catch (Exception e) {
-      throw new IOException(e);
     }
     throw new IOException("No key found for subject '" + subject + "'");
   }
@@ -640,20 +641,17 @@ public final class Encryption {
   }
 
   public static void incrementIv(byte[] iv, int v) {
+    // v should be > 0
     int length = iv.length;
-    boolean carry = true;
-    // TODO: Optimize for v > 1, e.g. 16, 32
-    do {
-      for (int i = 0; i < length; i++) {
-        if (carry) {
-          iv[i] = (byte) ((iv[i] + 1) & 0xFF);
-          carry = 0 == iv[i];
-        } else {
-          break;
-        }
+    int sum = 0;
+    for (int i = 0; i < length; i++) {
+      if (v <= 0) {
+        break;
       }
-      v--;
-    } while (v > 0);
+      sum = v + (iv[i] & 0xFF);
+      v =  sum / 256;
+      iv[i] = (byte)(sum % 256);
+    }
   }
 
   /**

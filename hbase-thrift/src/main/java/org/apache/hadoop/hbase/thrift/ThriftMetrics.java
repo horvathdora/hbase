@@ -20,6 +20,7 @@
 package org.apache.hadoop.hbase.thrift;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.CallDroppedException;
 import org.apache.hadoop.hbase.CallQueueTooBigException;
 import org.apache.hadoop.hbase.CompatibilitySingletonFactory;
 import org.apache.hadoop.hbase.MultiActionResultTooLarge;
@@ -30,6 +31,7 @@ import org.apache.hadoop.hbase.exceptions.ClientExceptionsUtil;
 import org.apache.hadoop.hbase.exceptions.FailedSanityCheckException;
 import org.apache.hadoop.hbase.exceptions.OutOfOrderScannerNextException;
 import org.apache.hadoop.hbase.exceptions.RegionMovedException;
+import org.apache.hadoop.hbase.exceptions.RequestTooBigException;
 import org.apache.hadoop.hbase.exceptions.ScannerResetException;
 import org.apache.hadoop.hbase.quotas.QuotaExceededException;
 import org.apache.hadoop.hbase.quotas.RpcThrottlingException;
@@ -154,8 +156,15 @@ public class ThriftMetrics  {
         source.quotaExceededException();
       } else if (throwable instanceof RpcThrottlingException) {
         source.rpcThrottlingException();
-      } else if (LOG.isDebugEnabled()) {
-        LOG.debug("Unknown exception type", throwable);
+      } else if (throwable instanceof CallDroppedException) {
+        source.callDroppedException();
+      } else if (throwable instanceof RequestTooBigException) {
+        source.requestTooBigException();
+      } else {
+        source.otherExceptions();
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Unknown exception type", throwable);
+        }
       }
     }
   }

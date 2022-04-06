@@ -19,7 +19,7 @@ package org.apache.hadoop.hbase.mob;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.Random;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -78,7 +78,6 @@ public class TestMobStoreScanner {
   private static Admin admin;
   private static ColumnFamilyDescriptor familyDescriptor;
   private static TableDescriptor tableDescriptor;
-  private static Random random = new Random();
   private static long defaultThreshold = 10;
   private FileSystem fs;
   private Configuration conf;
@@ -119,7 +118,7 @@ public class TestMobStoreScanner {
    */
   private static byte[] generateMobValue(int size) {
     byte[] mobVal = new byte[size];
-    random.nextBytes(mobVal);
+    Bytes.random(mobVal);
     return mobVal;
   }
 
@@ -165,8 +164,15 @@ public class TestMobStoreScanner {
     byte[] bigValue = new byte[25*1024*1024];
 
     Put put = new Put(row1);
+    Bytes.random(bigValue);
     put.addColumn(family, qf1, bigValue);
+    table.put(put);
+    put = new Put(row1);
+    Bytes.random(bigValue);
     put.addColumn(family, qf2, bigValue);
+    table.put(put);
+    put = new Put(row1);
+    Bytes.random(bigValue);
     put.addColumn(family, qf3, bigValue);
     table.put(put);
 

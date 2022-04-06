@@ -22,20 +22,6 @@ package org.apache.hadoop.hbase.rest;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.PUT;
-import javax.ws.rs.Produces;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.MultivaluedMap;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.Response.ResponseBuilder;
-import javax.ws.rs.core.UriInfo;
-
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.Cell.Type;
@@ -56,6 +42,19 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import org.apache.hbase.thirdparty.javax.ws.rs.Consumes;
+import org.apache.hbase.thirdparty.javax.ws.rs.DELETE;
+import org.apache.hbase.thirdparty.javax.ws.rs.GET;
+import org.apache.hbase.thirdparty.javax.ws.rs.POST;
+import org.apache.hbase.thirdparty.javax.ws.rs.PUT;
+import org.apache.hbase.thirdparty.javax.ws.rs.Produces;
+import org.apache.hbase.thirdparty.javax.ws.rs.core.Context;
+import org.apache.hbase.thirdparty.javax.ws.rs.core.HttpHeaders;
+import org.apache.hbase.thirdparty.javax.ws.rs.core.MultivaluedMap;
+import org.apache.hbase.thirdparty.javax.ws.rs.core.Response;
+import org.apache.hbase.thirdparty.javax.ws.rs.core.Response.ResponseBuilder;
+import org.apache.hbase.thirdparty.javax.ws.rs.core.UriInfo;
 
 @InterfaceAudience.Private
 public class RowResource extends ResourceBase {
@@ -224,10 +223,12 @@ public class RowResource extends ResourceBase {
         int i = 0;
         for (CellModel cell: row.getCells()) {
           byte[] col = cell.getColumn();
-          if (col == null) try {
-            col = rowspec.getColumns()[i++];
-          } catch (ArrayIndexOutOfBoundsException e) {
-            col = null;
+          if (col == null) {
+            try {
+              col = rowspec.getColumns()[i++];
+            } catch (ArrayIndexOutOfBoundsException e) {
+              col = null;
+            }
           }
           if (col == null) {
             servlet.getMetrics().incrementFailedPutRequests(1);
@@ -264,10 +265,12 @@ public class RowResource extends ResourceBase {
       servlet.getMetrics().incrementFailedPutRequests(1);
       return processException(e);
     } finally {
-      if (table != null) try {
-        table.close();
-      } catch (IOException ioe) {
-        LOG.debug("Exception received while closing the table", ioe);
+      if (table != null) {
+        try {
+          table.close();
+        } catch (IOException ioe) {
+          LOG.debug("Exception received while closing the table", ioe);
+        }
       }
     }
   }
@@ -335,10 +338,12 @@ public class RowResource extends ResourceBase {
       servlet.getMetrics().incrementFailedPutRequests(1);
       return processException(e);
     } finally {
-      if (table != null) try {
-        table.close();
-      } catch (IOException ioe) {
-        LOG.debug("Exception received while closing the table", ioe);
+      if (table != null) {
+        try {
+          table.close();
+        } catch (IOException ioe) {
+          LOG.debug("Exception received while closing the table", ioe);
+        }
       }
     }
   }
@@ -400,10 +405,11 @@ public class RowResource extends ResourceBase {
         .build();
     }
     Delete delete = null;
-    if (rowspec.hasTimestamp())
+    if (rowspec.hasTimestamp()) {
       delete = new Delete(rowspec.getRow(), rowspec.getTimestamp());
-    else
+    } else {
       delete = new Delete(rowspec.getRow());
+    }
 
     for (byte[] column: rowspec.getColumns()) {
       byte[][] split = CellUtil.parseColumn(column);
@@ -441,10 +447,12 @@ public class RowResource extends ResourceBase {
       servlet.getMetrics().incrementFailedDeleteRequests(1);
       return processException(e);
     } finally {
-      if (table != null) try {
-        table.close();
-      } catch (IOException ioe) {
-        LOG.debug("Exception received while closing the table", ioe);
+      if (table != null) {
+        try {
+          table.close();
+        } catch (IOException ioe) {
+          LOG.debug("Exception received while closing the table", ioe);
+        }
       }
     }
     return Response.ok().build();
@@ -558,10 +566,12 @@ public class RowResource extends ResourceBase {
       servlet.getMetrics().incrementFailedPutRequests(1);
       return processException(e);
     } finally {
-      if (table != null) try {
-        table.close();
-      } catch (IOException ioe) {
-        LOG.debug("Exception received while closing the table", ioe);
+      if (table != null) {
+        try {
+          table.close();
+        } catch (IOException ioe) {
+          LOG.debug("Exception received while closing the table", ioe);
+        }
       }
     }
   }
@@ -688,10 +698,12 @@ public class RowResource extends ResourceBase {
       servlet.getMetrics().incrementFailedDeleteRequests(1);
       return processException(e);
     } finally {
-      if (table != null) try {
-        table.close();
-      } catch (IOException ioe) {
-        LOG.debug("Exception received while closing the table", ioe);
+      if (table != null) {
+        try {
+          table.close();
+        } catch (IOException ioe) {
+          LOG.debug("Exception received while closing the table", ioe);
+        }
       }
     }
   }
@@ -782,10 +794,12 @@ public class RowResource extends ResourceBase {
       servlet.getMetrics().incrementFailedAppendRequests(1);
       return processException(e);
     } finally {
-      if (table != null) try {
-        table.close();
-      } catch (IOException ioe) {
-        LOG.debug("Exception received while closing the table" + table.getName(), ioe);
+      if (table != null) {
+        try {
+          table.close();
+        } catch (IOException ioe) {
+          LOG.debug("Exception received while closing the table" + table.getName(), ioe);
+        }
       }
     }
   }
@@ -879,10 +893,12 @@ public class RowResource extends ResourceBase {
       servlet.getMetrics().incrementFailedIncrementRequests(1);
       return processException(e);
     } finally {
-      if (table != null) try {
-        table.close();
-      } catch (IOException ioe) {
-        LOG.debug("Exception received while closing the table " + table.getName(), ioe);
+      if (table != null) {
+        try {
+          table.close();
+        } catch (IOException ioe) {
+          LOG.debug("Exception received while closing the table " + table.getName(), ioe);
+        }
       }
     }
   }

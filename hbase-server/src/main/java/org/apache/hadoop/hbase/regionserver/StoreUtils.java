@@ -20,15 +20,21 @@ package org.apache.hadoop.hbase.regionserver;
 
 import java.io.IOException;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
-
+import java.util.function.Predicate;
+import java.util.function.ToLongFunction;
+import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellComparator;
 import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.CompoundConfiguration;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.client.ColumnFamilyDescriptor;
+import org.apache.hadoop.hbase.client.TableDescriptor;
 import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.util.ChecksumType;
 import org.apache.yetus.audience.InterfaceAudience;
@@ -39,9 +45,12 @@ import org.slf4j.LoggerFactory;
  * Utility functions for region server storage layer.
  */
 @InterfaceAudience.Private
-public class StoreUtils {
+public final class StoreUtils {
 
   private static final Logger LOG = LoggerFactory.getLogger(StoreUtils.class);
+
+  private StoreUtils() {
+  }
 
   /**
    * Creates a deterministic hash code for store file collection.
@@ -161,4 +170,38 @@ public class StoreUtils {
         HFile.DEFAULT_BYTES_PER_CHECKSUM);
   }
 
+  public static Configuration createStoreConfiguration(Configuration conf, TableDescriptor td,
+      ColumnFamilyDescriptor cfd) {
+    // CompoundConfiguration will look for keys in reverse order of addition, so we'd
+    // add global config first, then table and cf overrides, then cf metadata.
+    return new CompoundConfiguration().add(conf).addBytesMap(td.getValues())
+        .addStringMap(cfd.getConfiguration()).addBytesMap(cfd.getValues());
+  }
+
+  public static List<StoreFileInfo> toStoreFileInfo(Collection<HStoreFile> storefiles) {
+    return storefiles.stream().map(HStoreFile::getFileInfo).collect(Collectors.toList());
+  }
+
+  public static long getTotalUncompressedBytes(List<HStoreFile> files) {
+    return files.stream()
+      .mapToLong(file -> getStorefileFieldSize(file, StoreFileReader::getTotalUncompressedBytes))
+      .sum();
+  }
+
+  public static long getStorefilesSize(Collection<HStoreFile> files,
+    Predicate<HStoreFile> predicate) {
+    return files.stream().filter(predicate)
+      .mapToLong(file -> getStorefileFieldSize(file, StoreFileReader::length)).sum();
+  }
+
+  public static long getStorefileFieldSize(HStoreFile file, ToLongFunction<StoreFileReader> f) {
+    if (file == null) {
+      return 0L;
+    }
+    StoreFileReader reader = file.getReader();
+    if (reader == null) {
+      return 0L;
+    }
+    return f.applyAsLong(reader);
+  }
 }

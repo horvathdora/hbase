@@ -25,6 +25,7 @@ import static org.junit.Assert.fail;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.concurrent.ThreadLocalRandom;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.testclassification.MiscTests;
 import org.apache.hadoop.hbase.testclassification.SmallTests;
@@ -70,9 +71,14 @@ public class TestOrderedBytes {
   static final BigDecimal[] BD_VALS =
     { null, BigDecimal.valueOf(Long.MAX_VALUE), BigDecimal.valueOf(Long.MIN_VALUE),
       BigDecimal.valueOf(Double.MAX_VALUE), BigDecimal.valueOf(Double.MIN_VALUE),
-      BigDecimal.valueOf(Long.MAX_VALUE).multiply(BigDecimal.valueOf(100)) };
+      BigDecimal.valueOf(Long.MAX_VALUE).multiply(BigDecimal.valueOf(100)),
+      BigDecimal.valueOf(Long.MAX_VALUE).pow(64),
+      BigDecimal.valueOf(Long.MAX_VALUE).pow(64).negate(),
+      new BigDecimal("0." + String.join("", Collections.nCopies(500, "123"))),
+      new BigDecimal("-0." + String.join("", Collections.nCopies(500, "123")))
+    };
   static final int[] BD_LENGTHS =
-    { 1, 11, 11, 11, 4, 12 };
+    { 1, 11, 11, 11, 4, 12, 19, 19, 18, 18 };
 
   /*
    * This is the smallest difference between two doubles in D_VALS
@@ -335,7 +341,11 @@ public class TestOrderedBytes {
         if (null == BD_VALS[i]) {
           assertEquals(BD_VALS[i], decoded);
         } else {
-          assertEquals("Deserialization failed.", 0, BD_VALS[i].compareTo(decoded));
+          // The num will be rounded to a specific precision in the encoding phase.
+          // So that big value will lose precision here. Need to add a normalization here to
+          // make the test pass.
+          assertEquals("Deserialization failed.", 0,
+            OrderedBytes.normalize(BD_VALS[i]).compareTo(decoded));
         }
         assertEquals("Did not consume enough bytes.", BD_LENGTHS[i], buf1.getPosition() - 1);
       }
@@ -1263,26 +1273,44 @@ public class TestOrderedBytes {
     int cnt = 0;
     PositionedByteRange buff = new SimplePositionedMutableByteRange(1024);
     for (Order ord : new Order[] { Order.ASCENDING, Order.DESCENDING }) {
-      int o;
-      o = OrderedBytes.encodeNull(buff, ord); cnt++;
-      o = OrderedBytes.encodeNumeric(buff, negInf, ord); cnt++;
-      o = OrderedBytes.encodeNumeric(buff, negLarge, ord); cnt++;
-      o = OrderedBytes.encodeNumeric(buff, negMed, ord); cnt++;
-      o = OrderedBytes.encodeNumeric(buff, negSmall, ord); cnt++;
-      o = OrderedBytes.encodeNumeric(buff, zero, ord); cnt++;
-      o = OrderedBytes.encodeNumeric(buff, posSmall, ord); cnt++;
-      o = OrderedBytes.encodeNumeric(buff, posMed, ord); cnt++;
-      o = OrderedBytes.encodeNumeric(buff, posLarge, ord); cnt++;
-      o = OrderedBytes.encodeNumeric(buff, posInf, ord); cnt++;
-      o = OrderedBytes.encodeNumeric(buff, nan, ord); cnt++;
-      o = OrderedBytes.encodeInt8(buff, int8, ord); cnt++;
-      o = OrderedBytes.encodeInt16(buff, int16, ord); cnt++;
-      o = OrderedBytes.encodeInt32(buff, int32, ord); cnt++;
-      o = OrderedBytes.encodeInt64(buff, int64, ord); cnt++;
-      o = OrderedBytes.encodeFloat32(buff, float32, ord); cnt++;
-      o = OrderedBytes.encodeFloat64(buff, float64, ord); cnt++;
-      o = OrderedBytes.encodeString(buff, text, ord); cnt++;
-      o = OrderedBytes.encodeBlobVar(buff, blobVar, ord); cnt++;
+      OrderedBytes.encodeNull(buff, ord);
+      cnt++;
+      OrderedBytes.encodeNumeric(buff, negInf, ord);
+      cnt++;
+      OrderedBytes.encodeNumeric(buff, negLarge, ord);
+      cnt++;
+      OrderedBytes.encodeNumeric(buff, negMed, ord);
+      cnt++;
+      OrderedBytes.encodeNumeric(buff, negSmall, ord);
+      cnt++;
+      OrderedBytes.encodeNumeric(buff, zero, ord);
+      cnt++;
+      OrderedBytes.encodeNumeric(buff, posSmall, ord);
+      cnt++;
+      OrderedBytes.encodeNumeric(buff, posMed, ord);
+      cnt++;
+      OrderedBytes.encodeNumeric(buff, posLarge, ord);
+      cnt++;
+      OrderedBytes.encodeNumeric(buff, posInf, ord);
+      cnt++;
+      OrderedBytes.encodeNumeric(buff, nan, ord);
+      cnt++;
+      OrderedBytes.encodeInt8(buff, int8, ord);
+      cnt++;
+      OrderedBytes.encodeInt16(buff, int16, ord);
+      cnt++;
+      OrderedBytes.encodeInt32(buff, int32, ord);
+      cnt++;
+      OrderedBytes.encodeInt64(buff, int64, ord);
+      cnt++;
+      OrderedBytes.encodeFloat32(buff, float32, ord);
+      cnt++;
+      OrderedBytes.encodeFloat64(buff, float64, ord);
+      cnt++;
+      OrderedBytes.encodeString(buff, text, ord);
+      cnt++;
+      OrderedBytes.encodeBlobVar(buff, blobVar, ord);
+      cnt++;
     }
 
     buff.setPosition(0);
@@ -1290,6 +1318,27 @@ public class TestOrderedBytes {
     for (int i = 0; i < cnt; i++) {
       assertTrue(OrderedBytes.isEncodedValue(buff));
       OrderedBytes.skip(buff);
+    }
+  }
+
+  /**
+   * Test if the data encoded by our encoding function can be decoded correctly.
+   */
+  @Test
+  public void testEncodeDecodeMatch() {
+    int samplesQuantity = 200;
+    for (int i = 0; i < samplesQuantity; i++) {
+      BigDecimal randomData = BigDecimal.valueOf(ThreadLocalRandom.current().nextDouble() +
+        ThreadLocalRandom.current().nextLong());
+      PositionedByteRange tmp = new SimplePositionedMutableByteRange(100);
+      Order ord = ThreadLocalRandom.current().nextBoolean() ? Order.DESCENDING : Order.ASCENDING;
+
+      OrderedBytes.encodeNumeric(tmp, randomData, ord);
+      tmp.setPosition(0);
+
+      BigDecimal left = OrderedBytes.normalize(randomData);
+      BigDecimal right = OrderedBytes.decodeNumericAsBigDecimal(tmp);
+      assertEquals(0, left.compareTo(right));
     }
   }
 }

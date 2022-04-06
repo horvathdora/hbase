@@ -52,6 +52,7 @@ import org.apache.hadoop.hbase.io.WALLink;
 import org.apache.hadoop.hbase.io.hadoopbackport.ThrottledInputStream;
 import org.apache.hadoop.hbase.mapreduce.TableMapReduceUtil;
 import org.apache.hadoop.hbase.mob.MobUtils;
+import org.apache.hadoop.hbase.regionserver.StoreFileInfo;
 import org.apache.hadoop.hbase.util.AbstractHBaseTool;
 import org.apache.hadoop.hbase.util.CommonFSUtils;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
@@ -142,6 +143,8 @@ public class ExportSnapshot extends AbstractHBaseTool implements Tool {
         "Do not verify checksum, use name+length only.");
     static final Option NO_TARGET_VERIFY = new Option(null, "no-target-verify", false,
         "Do not verify the integrity of the exported snapshot.");
+    static final Option NO_SOURCE_VERIFY = new Option(null, "no-source-verify", false,
+      "Do not verify the source of the snapshot.");
     static final Option OVERWRITE = new Option(null, "overwrite", false,
         "Rewrite the snapshot manifest if already exists.");
     static final Option CHUSER = new Option(null, "chuser", true,
@@ -584,29 +587,37 @@ public class ExportSnapshot extends AbstractHBaseTool implements Tool {
         @Override
         public void storeFile(final RegionInfo regionInfo, final String family,
             final SnapshotRegionManifest.StoreFile storeFile) throws IOException {
-          // for storeFile.hasReference() case, copied as part of the manifest
+          Pair<SnapshotFileInfo, Long> snapshotFileAndSize = null;
           if (!storeFile.hasReference()) {
             String region = regionInfo.getEncodedName();
             String hfile = storeFile.getName();
-            Path path = HFileLink.createPath(table, region, family, hfile);
-
-            SnapshotFileInfo fileInfo = SnapshotFileInfo.newBuilder()
-              .setType(SnapshotFileInfo.Type.HFILE)
-              .setHfile(path.toString())
-              .build();
-
-            long size;
-            if (storeFile.hasFileSize()) {
-              size = storeFile.getFileSize();
-            } else {
-              size = HFileLink.buildFromHFileLinkPattern(conf, path).getFileStatus(fs).getLen();
-            }
-            files.add(new Pair<>(fileInfo, size));
+            snapshotFileAndSize = getSnapshotFileAndSize(fs, conf, table, region, family, hfile,
+              storeFile.hasFileSize() ? storeFile.getFileSize() : -1);
+          } else {
+            Pair<String, String> referredToRegionAndFile =
+                StoreFileInfo.getReferredToRegionAndFile(storeFile.getName());
+            String referencedRegion = referredToRegionAndFile.getFirst();
+            String referencedHFile = referredToRegionAndFile.getSecond();
+            snapshotFileAndSize = getSnapshotFileAndSize(fs, conf, table, referencedRegion, family,
+              referencedHFile, storeFile.hasFileSize() ? storeFile.getFileSize() : -1);
           }
+          files.add(snapshotFileAndSize);
         }
-    });
+      });
 
     return files;
+  }
+
+  private static Pair<SnapshotFileInfo, Long> getSnapshotFileAndSize(FileSystem fs,
+      Configuration conf, TableName table, String region, String family, String hfile, long size)
+      throws IOException {
+    Path path = HFileLink.createPath(table, region, family, hfile);
+    SnapshotFileInfo fileInfo = SnapshotFileInfo.newBuilder().setType(SnapshotFileInfo.Type.HFILE)
+        .setHfile(path.toString()).build();
+    if (size == -1) {
+      size = HFileLink.buildFromHFileLinkPattern(conf, path).getFileStatus(fs).getLen();
+    }
+    return new Pair<>(fileInfo, size);
   }
 
   /**
@@ -906,6 +917,7 @@ public class ExportSnapshot extends AbstractHBaseTool implements Tool {
   }
 
   private boolean verifyTarget = true;
+  private boolean verifySource = true;
   private boolean verifyChecksum = true;
   private String snapshotName = null;
   private String targetName = null;
@@ -937,6 +949,7 @@ public class ExportSnapshot extends AbstractHBaseTool implements Tool {
     // And verifyChecksum and verifyTarget with values read from old args in processOldArgs(...).
     verifyChecksum = !cmd.hasOption(Options.NO_CHECKSUM_VERIFY.getLongOpt());
     verifyTarget = !cmd.hasOption(Options.NO_TARGET_VERIFY.getLongOpt());
+    verifySource = !cmd.hasOption(Options.NO_SOURCE_VERIFY.getLongOpt());
   }
 
   /**
@@ -986,6 +999,13 @@ public class ExportSnapshot extends AbstractHBaseTool implements Tool {
     LOG.debug("inputFs={}, inputRoot={}", inputFs.getUri().toString(), inputRoot);
     LOG.debug("outputFs={}, outputRoot={}, skipTmp={}, initialOutputSnapshotDir={}",
       outputFs, outputRoot.toString(), skipTmp, initialOutputSnapshotDir);
+
+    // Verify snapshot source before copying files
+    if (verifySource) {
+      LOG.info("Verify snapshot source, inputFs={}, inputRoot={}, snapshotDir={}.",
+        inputFs.getUri(), inputRoot, snapshotDir);
+      verifySnapshot(srcConf, inputFs, inputRoot, snapshotDir);
+    }
 
     // Find the necessary directory which need to change owner and group
     Path needSetOwnerDir = SnapshotDescriptionUtils.getSnapshotRootDir(outputRoot);
@@ -1137,6 +1157,7 @@ public class ExportSnapshot extends AbstractHBaseTool implements Tool {
     addOption(Options.TARGET_NAME);
     addOption(Options.NO_CHECKSUM_VERIFY);
     addOption(Options.NO_TARGET_VERIFY);
+    addOption(Options.NO_SOURCE_VERIFY);
     addOption(Options.OVERWRITE);
     addOption(Options.CHUSER);
     addOption(Options.CHGROUP);

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,10 +21,10 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Abortable;
 import org.apache.hadoop.hbase.HBaseInterfaceAudience;
 import org.apache.hadoop.hbase.HConstants;
-import org.apache.yetus.audience.InterfaceAudience;
-import org.apache.yetus.audience.InterfaceStability;
 import org.apache.hadoop.hbase.conf.ConfigurationObserver;
 import org.apache.hadoop.hbase.master.MasterAnnotationReadingPriorityFunction;
+import org.apache.yetus.audience.InterfaceAudience;
+import org.apache.yetus.audience.InterfaceStability;
 
 /**
  * The default scheduler. Configurable. Maintains isolated handler pools for general ('default'),
@@ -88,10 +88,12 @@ public class SimpleRpcScheduler extends RpcScheduler implements ConfigurationObs
 
     if (callqReadShare > 0) {
       // at least 1 read handler and 1 write handler
-      callExecutor = new RWQueueRpcExecutor("default.RWQ", Math.max(2, handlerCount),
+      callExecutor = new FastPathRWQueueRpcExecutor("default.FPRWQ", Math.max(2, handlerCount),
         maxQueueLength, priority, conf, server);
     } else {
-      if (RpcExecutor.isFifoQueueType(callQueueType) || RpcExecutor.isCodelQueueType(callQueueType)) {
+      if (RpcExecutor.isFifoQueueType(callQueueType) ||
+        RpcExecutor.isCodelQueueType(callQueueType) ||
+        RpcExecutor.isPluggableQueueWithFastPath(callQueueType, conf)) {
         callExecutor = new FastPathBalancedQueueRpcExecutor("default.FPBQ", handlerCount,
             maxQueueLength, priority, conf, server);
       } else {
@@ -196,7 +198,7 @@ public class SimpleRpcScheduler extends RpcScheduler implements ConfigurationObs
   }
 
   @Override
-  public boolean dispatch(CallRunner callTask) throws InterruptedException {
+  public boolean dispatch(CallRunner callTask) {
     RpcCall call = callTask.getRpcCall();
     int level = priority.getPriority(call.getHeader(), call.getParam(),
         call.getRequestUser().orElse(null));

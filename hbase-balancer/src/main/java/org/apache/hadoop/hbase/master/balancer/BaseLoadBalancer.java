@@ -164,7 +164,7 @@ public abstract class BaseLoadBalancer implements LoadBalancer {
     int numServers = servers == null ? 0 : servers.size();
     if (numServers == 0) {
       LOG.warn("Wanted to do round robin assignment but no servers to assign to");
-      return Collections.emptyMap();
+      return Collections.singletonMap(BOGUS_SERVER_NAME, new ArrayList<>(regions));
     }
 
     // TODO: instead of retainAssignment() and roundRobinAssignment(), we should just run the
@@ -272,7 +272,7 @@ public abstract class BaseLoadBalancer implements LoadBalancer {
     int numServers = servers == null ? 0 : servers.size();
     if (numServers == 0) {
       LOG.warn("Wanted to do retain assignment but no servers to assign to");
-      return Collections.emptyMap();
+      return Collections.singletonMap(BOGUS_SERVER_NAME, new ArrayList<>(regions.keySet()));
     }
 
     if (numServers == 1) { // Only one server, nothing fancy we can do here
@@ -546,7 +546,7 @@ public abstract class BaseLoadBalancer implements LoadBalancer {
       new HashMap<>();
   }
 
-  private Map<ServerName, List<RegionInfo>> toEnsumbleTableLoad(
+  protected final Map<ServerName, List<RegionInfo>> toEnsumbleTableLoad(
       Map<TableName, Map<ServerName, List<RegionInfo>>> LoadOfAllTable) {
     Map<ServerName, List<RegionInfo>> returnMap = new TreeMap<>();
     for (Map<ServerName, List<RegionInfo>> serverNameListMap : LoadOfAllTable.values()) {
@@ -608,7 +608,7 @@ public abstract class BaseLoadBalancer implements LoadBalancer {
       });
       return result;
     } else {
-      LOG.info("Start Generate Balance plan for cluster.");
+      LOG.debug("Start Generate Balance plan for cluster.");
       return balanceTable(HConstants.ENSEMBLE_TABLE_NAME, toEnsumbleTableLoad(loadOfAllTable));
     }
   }

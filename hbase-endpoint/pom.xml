@@ -23,7 +23,7 @@
   <parent>
     <artifactId>hbase-build-configuration</artifactId>
     <groupId>org.apache.hbase</groupId>
-    <version>3.0.0-alpha-2-SNAPSHOT</version>
+    <version>3.0.0-alpha-3-SNAPSHOT</version>
     <relativePath>../hbase-build-configuration</relativePath>
   </parent>
   <artifactId>hbase-endpoint</artifactId>
@@ -108,6 +108,12 @@
     <dependency>
       <groupId>org.apache.hbase</groupId>
       <artifactId>hbase-client</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hbase</groupId>
+      <artifactId>hbase-client</artifactId>
+      <type>test-jar</type>
+      <scope>test</scope>
     </dependency>
     <!--Some of the CPEPs use hbase server-side internals; they shouldn't!-->
     <dependency>
@@ -211,6 +217,23 @@
     <dependency>
       <groupId>org.apache.logging.log4j</groupId>
       <artifactId>log4j-1.2-api</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- when depending on a test jar, maven does not pull in the transitive dependencies. require
+    them manually. -->
+    <dependency>
+      <groupId>org.hamcrest</groupId>
+      <artifactId>hamcrest-library</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-sdk-trace</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-sdk-testing</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

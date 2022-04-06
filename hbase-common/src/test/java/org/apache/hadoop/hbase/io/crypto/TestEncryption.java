@@ -48,9 +48,9 @@ public class TestEncryption {
   @Test
   public void testSmallBlocks() throws Exception {
     byte[] key = new byte[16];
-    Bytes.random(key);
+    Bytes.secureRandom(key);
     byte[] iv = new byte[16];
-    Bytes.random(iv);
+    Bytes.secureRandom(iv);
     for (int size: new int[] { 4, 8, 16, 32, 64, 128, 256, 512 }) {
       checkTransformSymmetry(key, iv, getRandomBlock(size));
     }
@@ -59,9 +59,9 @@ public class TestEncryption {
   @Test
   public void testLargeBlocks() throws Exception {
     byte[] key = new byte[16];
-    Bytes.random(key);
+    Bytes.secureRandom(key);
     byte[] iv = new byte[16];
-    Bytes.random(iv);
+    Bytes.secureRandom(iv);
     for (int size: new int[] { 256 * 1024, 512 * 1024, 1024 * 1024 }) {
       checkTransformSymmetry(key, iv, getRandomBlock(size));
     }
@@ -70,9 +70,9 @@ public class TestEncryption {
   @Test
   public void testOddSizedBlocks() throws Exception {
     byte[] key = new byte[16];
-    Bytes.random(key);
+    Bytes.secureRandom(key);
     byte[] iv = new byte[16];
-    Bytes.random(iv);
+    Bytes.secureRandom(iv);
     for (int size: new int[] { 3, 7, 11, 23, 47, 79, 119, 175 }) {
       checkTransformSymmetry(key, iv, getRandomBlock(size));
     }
@@ -81,12 +81,32 @@ public class TestEncryption {
   @Test
   public void testTypicalHFileBlocks() throws Exception {
     byte[] key = new byte[16];
-    Bytes.random(key);
+    Bytes.secureRandom(key);
     byte[] iv = new byte[16];
-    Bytes.random(iv);
+    Bytes.secureRandom(iv);
     for (int size: new int[] { 4 * 1024, 8 * 1024, 64 * 1024, 128 * 1024 }) {
       checkTransformSymmetry(key, iv, getRandomBlock(size));
     }
+  }
+
+  @Test
+  public void testIncrementIV() {
+    byte[] iv = new byte[] {1, 2, 3};
+    byte[] iv_neg = new byte[] {-3, -13, 25};
+    Encryption.incrementIv(iv);
+    assertTrue(Bytes.equals(iv, new byte[] {2, 2, 3}));
+
+    Encryption.incrementIv(iv, 255);
+    assertTrue(Bytes.equals(iv, new byte[] {1, 3, 3}));
+
+    Encryption.incrementIv(iv, 1024);
+    assertTrue(Bytes.equals(iv, new byte[] {1, 7, 3}));
+
+    Encryption.incrementIv(iv_neg);
+    assertTrue(Bytes.equals(iv_neg, new byte[] {-2, -13, 25}));
+
+    Encryption.incrementIv(iv_neg, 5);
+    assertTrue(Bytes.equals(iv_neg, new byte[] {3, -12, 25}));
   }
 
   private void checkTransformSymmetry(byte[] keyBytes, byte[] iv, byte[] plaintext)

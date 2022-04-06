@@ -20,6 +20,7 @@ package org.apache.hadoop.hbase.tool;
 
 import static org.apache.hadoop.hbase.HConstants.DEFAULT_ZOOKEEPER_ZNODE_PARENT;
 import static org.apache.hadoop.hbase.HConstants.ZOOKEEPER_ZNODE_PARENT;
+import static org.apache.hadoop.hbase.util.Addressing.inetSocketAddress2String;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.BindException;
@@ -33,7 +34,6 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Callable;
@@ -99,7 +99,6 @@ import org.apache.zookeeper.client.ConnectStringParser;
 import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hbase.thirdparty.com.google.common.collect.Lists;
 
 /**
@@ -603,14 +602,13 @@ public class CanaryTool implements Tool, Canary {
         if (rowToCheck.length == 0) {
           rowToCheck = new byte[]{0x0};
         }
-        int writeValueSize =
-            connection.getConfiguration().getInt(HConstants.HBASE_CANARY_WRITE_VALUE_SIZE_KEY, 10);
+        int writeValueSize = connection.getConfiguration()
+          .getInt(HConstants.HBASE_CANARY_WRITE_VALUE_SIZE_KEY, 10);
         for (ColumnFamilyDescriptor column : tableDesc.getColumnFamilies()) {
           Put put = new Put(rowToCheck);
           byte[] value = new byte[writeValueSize];
           Bytes.random(value);
           put.addColumn(column.getName(), HConstants.EMPTY_BYTE_ARRAY, value);
-
           LOG.debug("Writing to {} {} {} {}",
             tableDesc.getTableName(), region.getRegionNameAsString(), column.getNameAsString(),
             Bytes.toStringBinary(rowToCheck));
@@ -1707,7 +1705,7 @@ public class CanaryTool implements Tool, Canary {
           new ConnectStringParser(ZKConfig.getZKQuorumServersString(configuration));
       hosts = Lists.newArrayList();
       for (InetSocketAddress server : parser.getServerAddresses()) {
-        hosts.add(server.toString());
+        hosts.add(inetSocketAddress2String(server));
       }
       if (allowedFailures > (hosts.size() - 1) / 2) {
         LOG.warn(
@@ -1830,7 +1828,6 @@ public class CanaryTool implements Tool, Canary {
         RegionServerStdOutSink regionServerSink) {
       List<RegionServerTask> tasks = new ArrayList<>();
       Map<String, AtomicLong> successMap = new HashMap<>();
-      Random rand = new Random();
       for (Map.Entry<String, List<RegionInfo>> entry : rsAndRMap.entrySet()) {
         String serverName = entry.getKey();
         AtomicLong successes = new AtomicLong(0);
@@ -1847,7 +1844,8 @@ public class CanaryTool implements Tool, Canary {
           }
         } else {
           // random select a region if flag not set
-          RegionInfo region = entry.getValue().get(rand.nextInt(entry.getValue().size()));
+          RegionInfo region = entry.getValue()
+              .get(ThreadLocalRandom.current().nextInt(entry.getValue().size()));
           tasks.add(new RegionServerTask(this.connection,
               serverName,
               region,

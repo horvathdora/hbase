@@ -27,8 +27,9 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
-import java.util.Random;
+import java.util.UUID;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -46,6 +47,7 @@ import org.apache.hadoop.hbase.client.RegionInfoBuilder;
 import org.apache.hadoop.hbase.client.TableDescriptorBuilder;
 import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.io.hfile.HFileContextBuilder;
+import org.apache.hadoop.hbase.regionserver.storefiletracker.StoreFileTrackerFactory;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.wal.WAL;
@@ -62,25 +64,46 @@ import org.junit.rules.TestName;
 
 import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.WALProtos;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+@RunWith(Parameterized.class)
 public class TestBulkloadBase {
   @ClassRule
   public static TemporaryFolder testFolder = new TemporaryFolder();
   private static HBaseTestingUtil TEST_UTIL = new HBaseTestingUtil();
   protected final WAL log = mock(WAL.class);
   protected final Configuration conf = HBaseConfiguration.create();
-  private final Random random = new Random();
   private final byte[] randomBytes = new byte[100];
   protected final byte[] family1 = Bytes.toBytes("family1");
   protected final byte[] family2 = Bytes.toBytes("family2");
   protected final byte[] family3 = Bytes.toBytes("family3");
 
+  protected Boolean useFileBasedSFT;
+
   @Rule
   public TestName name = new TestName();
 
+  public TestBulkloadBase(boolean useFileBasedSFT) {
+    this.useFileBasedSFT = useFileBasedSFT;
+  }
+
+  @Parameterized.Parameters
+  public static Collection<Boolean> data() {
+    Boolean[] data = {false, true};
+    return Arrays.asList(data);
+  }
+
   @Before
   public void before() throws IOException {
-    random.nextBytes(randomBytes);
+    Bytes.random(randomBytes);
+    if(useFileBasedSFT) {
+      conf.set(StoreFileTrackerFactory.TRACKER_IMPL,
+        "org.apache.hadoop.hbase.regionserver.storefiletracker.FileBasedStoreFileTracker");
+    }
+    else {
+      conf.unset(StoreFileTrackerFactory.TRACKER_IMPL);
+    }
   }
 
   protected Pair<byte[], String> withMissingHFileForFamily(byte[] family) {
@@ -115,7 +138,7 @@ public class TestBulkloadBase {
   }
 
   protected HRegion testRegionWithFamilies(byte[]... families) throws IOException {
-    TableName tableName = TableName.valueOf(name.getMethodName());
+    TableName tableName = TableName.valueOf(name.getMethodName().substring(0, name.getMethodName().indexOf("[")));
     return testRegionWithFamiliesAndSpecifiedTableName(tableName, families);
   }
 
@@ -134,7 +157,7 @@ public class TestBulkloadBase {
   private String createHFileForFamilies(byte[] family) throws IOException {
     HFile.WriterFactory hFileFactory = HFile.getWriterFactoryNoCache(conf);
     // TODO We need a way to do this without creating files
-    File hFileLocation = testFolder.newFile();
+    File hFileLocation = testFolder.newFile(generateUniqueName(null));
     FSDataOutputStream out = new FSDataOutputStream(new FileOutputStream(hFileLocation), null);
     try {
       hFileFactory.withOutputStream(out);
@@ -151,6 +174,12 @@ public class TestBulkloadBase {
       out.close();
     }
     return hFileLocation.getAbsoluteFile().getAbsolutePath();
+  }
+
+  private static String generateUniqueName(final String suffix) {
+    String name = UUID.randomUUID().toString().replaceAll("-", "");
+    if (suffix != null) name += suffix;
+    return name;
   }
 
   protected static Matcher<WALEdit> bulkLogWalEditType(byte[] typeBytes) {

@@ -191,6 +191,45 @@ message RestoreParentToChildRegionsPair {
   required string child2_region_name = 3;
 }
 
+enum SnapshotState {
+  SNAPSHOT_PREPARE = 1;
+  SNAPSHOT_PRE_OPERATION = 2;
+  SNAPSHOT_WRITE_SNAPSHOT_INFO = 3;
+  SNAPSHOT_SNAPSHOT_ONLINE_REGIONS = 4;
+  SNAPSHOT_SNAPSHOT_SPLIT_REGIONS = 5;
+  SNAPSHOT_SNAPSHOT_CLOSED_REGIONS = 6;
+  SNAPSHOT_SNAPSHOT_MOB_REGION = 7;
+  SNAPSHOT_CONSOLIDATE_SNAPSHOT = 8;
+  SNAPSHOT_VERIFIER_SNAPSHOT = 9;
+  SNAPSHOT_COMPLETE_SNAPSHOT = 10;
+  SNAPSHOT_POST_OPERATION = 11;
+}
+
+message SnapshotProcedureStateData {
+  required SnapshotDescription snapshot = 1;
+}
+
+message SnapshotRegionProcedureStateData {
+  required RegionInfo region = 1;
+  required SnapshotDescription snapshot = 2;
+}
+
+message SnapshotRegionParameter {
+  required RegionInfo region = 1;
+  required SnapshotDescription snapshot = 2;
+}
+
+message SnapshotVerifyProcedureStateData {
+  required SnapshotDescription snapshot = 1;
+  required RegionInfo region = 2;
+  optional ServerName target_server = 3;
+}
+
+message SnapshotVerifyParameter {
+  required SnapshotDescription snapshot = 1;
+  required RegionInfo region = 2;
+}
+
 enum CloneSnapshotState {
   CLONE_SNAPSHOT_PRE_OPERATION = 1;
   CLONE_SNAPSHOT_WRITE_FS_LAYOUT = 2;
@@ -207,6 +246,8 @@ message CloneSnapshotStateData {
   required TableSchema table_schema = 3;
   repeated RegionInfo region_info = 4;
   repeated RestoreParentToChildRegionsPair parent_to_child_regions_pair_list = 5;
+  optional bool restore_acl = 6;
+  optional string customSFT = 7;
 }
 
 enum RestoreSnapshotState {
@@ -225,6 +266,7 @@ message RestoreSnapshotStateData {
   repeated RegionInfo region_info_for_remove = 5;
   repeated RegionInfo region_info_for_add = 6;
   repeated RestoreParentToChildRegionsPair parent_to_child_regions_pair_list = 7;
+  optional bool restore_acl = 8;
 }
 
 enum DispatchMergingRegionsState {
@@ -644,4 +686,29 @@ message ClaimReplicationQueueRemoteParameter {
 enum ClaimReplicationQueuesState {
   CLAIM_REPLICATION_QUEUES_DISPATCH = 1;
   CLAIM_REPLICATION_QUEUES_FINISH = 2;
+}
+
+enum ModifyTableDescriptorState {
+  MODIFY_TABLE_DESCRIPTOR_PREPARE = 1;
+  MODIFY_TABLE_DESCRIPTOR_UPDATE = 2;
+}
+
+message ModifyTableDescriptorStateData {
+  required TableName table_name = 1;
+  optional TableSchema modified_table_schema = 2;
+}
+
+enum ModifyStoreFileTrackerState {
+  MODIFY_STORE_FILE_TRACKER_FINISH_PREVIOUS_MIGRATION = 1;
+  MODIFY_STORE_FILE_TRACKER_START_MIGRATION = 2;
+  MODIFY_STORE_FILE_TRACKER_FINISH_MIGRATION = 3;
+}
+
+message ModifyStoreFileTrackerStateData {
+  required TableName table_name = 1;
+  required string dst_sft = 2;
+}
+
+message ModifyColumnFamilyStoreFileTrackerStateData {
+  required bytes family = 1;
 }

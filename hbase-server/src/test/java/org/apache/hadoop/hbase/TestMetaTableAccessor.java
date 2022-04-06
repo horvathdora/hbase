@@ -27,11 +27,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
@@ -54,7 +54,6 @@ import org.apache.hadoop.hbase.testclassification.MiscTests;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.Pair;
-import org.apache.hadoop.hbase.zookeeper.MetaTableLocator;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
@@ -64,7 +63,6 @@ import org.junit.experimental.categories.Category;
 import org.junit.rules.TestName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hbase.thirdparty.com.google.common.collect.Lists;
 
 /**
@@ -80,7 +78,6 @@ public class TestMetaTableAccessor {
   private static final Logger LOG = LoggerFactory.getLogger(TestMetaTableAccessor.class);
   private static final HBaseTestingUtil UTIL = new HBaseTestingUtil();
   private static Connection connection;
-  private Random random = new Random();
 
   @Rule
   public TestName name = new TestName();
@@ -243,13 +240,6 @@ public class TestMetaTableAccessor {
   }
 
   @Test
-  public void testGetRegionsFromMetaTable() throws IOException, InterruptedException {
-    List<RegionInfo> regions = MetaTableLocator.getMetaRegions(UTIL.getZooKeeperWatcher());
-    assertTrue(regions.size() >= 1);
-    assertTrue(MetaTableLocator.getMetaRegionsAndLocations(UTIL.getZooKeeperWatcher()).size() >= 1);
-  }
-
-  @Test
   public void testGetRegion() throws IOException, InterruptedException {
     final String name = this.name.getMethodName();
     LOG.info("Started " + name);
@@ -300,9 +290,11 @@ public class TestMetaTableAccessor {
 
   @Test
   public void testMetaLocationsForRegionReplicas() throws IOException {
-    ServerName serverName0 = ServerName.valueOf("foo", 60010, random.nextLong());
-    ServerName serverName1 = ServerName.valueOf("bar", 60010, random.nextLong());
-    ServerName serverName100 = ServerName.valueOf("baz", 60010, random.nextLong());
+    Random rand = ThreadLocalRandom.current();
+
+    ServerName serverName0 = ServerName.valueOf("foo", 60010, rand.nextLong());
+    ServerName serverName1 = ServerName.valueOf("bar", 60010, rand.nextLong());
+    ServerName serverName100 = ServerName.valueOf("baz", 60010, rand.nextLong());
 
     long regionId = EnvironmentEdgeManager.currentTime();
     RegionInfo primary = RegionInfoBuilder.newBuilder(TableName.valueOf(name.getMethodName()))
@@ -315,9 +307,9 @@ public class TestMetaTableAccessor {
       .setStartKey(HConstants.EMPTY_START_ROW).setEndKey(HConstants.EMPTY_END_ROW).setSplit(false)
       .setRegionId(regionId).setReplicaId(100).build();
 
-    long seqNum0 = random.nextLong();
-    long seqNum1 = random.nextLong();
-    long seqNum100 = random.nextLong();
+    long seqNum0 = rand.nextLong();
+    long seqNum1 = rand.nextLong();
+    long seqNum100 = rand.nextLong();
 
     try (Table meta = MetaTableAccessor.getMetaHTable(connection)) {
       MetaTableAccessor.updateRegionLocation(connection, primary, serverName0, seqNum0,
@@ -493,7 +485,7 @@ public class TestMetaTableAccessor {
     }
 
     @Override
-    public boolean dispatch(CallRunner task) throws IOException, InterruptedException {
+    public boolean dispatch(CallRunner task) {
       int priority = task.getRpcCall().getPriority();
 
       if (priority > HConstants.QOS_THRESHOLD) {

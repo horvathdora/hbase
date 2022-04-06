@@ -27,9 +27,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
-import org.apache.commons.lang3.RandomUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -81,11 +81,9 @@ import org.junit.experimental.categories.Category;
 import org.junit.rules.TestName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hbase.thirdparty.com.google.common.base.Joiner;
 import org.apache.hbase.thirdparty.com.google.protobuf.RpcController;
 import org.apache.hbase.thirdparty.com.google.protobuf.ServiceException;
-
 import org.apache.hadoop.hbase.shaded.protobuf.generated.RegionServerStatusProtos.RegionStateTransition.TransitionCode;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.RegionServerStatusProtos.ReportRegionStateTransitionRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.RegionServerStatusProtos.ReportRegionStateTransitionResponse;
@@ -157,7 +155,8 @@ public class TestRegionMergeTransactionOnCluster {
       verifyRowCount(table, ROWSIZE);
 
       // Randomly choose one of the two merged regions
-      RegionInfo hri = RandomUtils.nextBoolean() ? mergedRegions.getFirst() : mergedRegions.getSecond();
+      RegionInfo hri = ThreadLocalRandom.current().nextBoolean() ? mergedRegions.getFirst() :
+        mergedRegions.getSecond();
       SingleProcessHBaseCluster cluster = TEST_UTIL.getHBaseCluster();
       AssignmentManager am = cluster.getMaster().getAssignmentManager();
       RegionStates regionStates = am.getRegionStates();
@@ -245,7 +244,7 @@ public class TestRegionMergeTransactionOnCluster {
         TEST_UTIL.getConfiguration(), fs, tabledir, mergedRegionInfo);
       int count = 0;
       for(ColumnFamilyDescriptor colFamily : columnFamilies) {
-        count += hrfs.getStoreFiles(colFamily.getName()).size();
+        count += hrfs.getStoreFiles(colFamily.getNameAsString()).size();
       }
       ADMIN.compactRegion(mergedRegionInfo.getRegionName());
       // clean up the merged region store files
@@ -254,7 +253,7 @@ public class TestRegionMergeTransactionOnCluster {
       int newcount = 0;
       while (EnvironmentEdgeManager.currentTime() < timeout) {
         for(ColumnFamilyDescriptor colFamily : columnFamilies) {
-          newcount += hrfs.getStoreFiles(colFamily.getName()).size();
+          newcount += hrfs.getStoreFiles(colFamily.getNameAsString()).size();
         }
         if(newcount > count) {
           break;
@@ -273,7 +272,7 @@ public class TestRegionMergeTransactionOnCluster {
       while (EnvironmentEdgeManager.currentTime() < timeout) {
         int newcount1 = 0;
         for(ColumnFamilyDescriptor colFamily : columnFamilies) {
-          newcount1 += hrfs.getStoreFiles(colFamily.getName()).size();
+          newcount1 += hrfs.getStoreFiles(colFamily.getNameAsString()).size();
         }
         if(newcount1 <= 1) {
           break;

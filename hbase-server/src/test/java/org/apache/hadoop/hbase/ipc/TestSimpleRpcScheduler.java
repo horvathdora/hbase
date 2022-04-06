@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -275,6 +275,41 @@ public class TestSimpleRpcScheduler {
   }
 
   @Test
+  public void testPluggableRpcQueueWireUpWithFastPathExecutor() throws Exception {
+    String queueType = RpcExecutor.CALL_QUEUE_TYPE_PLUGGABLE_CONF_VALUE;
+    Configuration schedConf = HBaseConfiguration.create();
+    schedConf.set(RpcExecutor.CALL_QUEUE_TYPE_CONF_KEY, queueType);
+    schedConf.set(RpcExecutor.PLUGGABLE_CALL_QUEUE_CLASS_NAME, "org.apache.hadoop.hbase.ipc.TestPluggableQueueImpl");
+    schedConf.setBoolean(RpcExecutor.PLUGGABLE_CALL_QUEUE_WITH_FAST_PATH_ENABLED, true);
+
+    PriorityFunction priority = mock(PriorityFunction.class);
+    when(priority.getPriority(any(), any(), any())).thenReturn(HConstants.NORMAL_QOS);
+    SimpleRpcScheduler scheduler = new SimpleRpcScheduler(schedConf, 0, 0, 0, priority,
+      HConstants.QOS_THRESHOLD);
+
+    Field f = scheduler.getClass().getDeclaredField("callExecutor");
+    f.setAccessible(true);
+    assertTrue(f.get(scheduler) instanceof FastPathBalancedQueueRpcExecutor);
+  }
+
+  @Test
+  public void testPluggableRpcQueueWireUpWithoutFastPathExecutor() throws Exception {
+    String queueType = RpcExecutor.CALL_QUEUE_TYPE_PLUGGABLE_CONF_VALUE;
+    Configuration schedConf = HBaseConfiguration.create();
+    schedConf.set(RpcExecutor.CALL_QUEUE_TYPE_CONF_KEY, queueType);
+    schedConf.set(RpcExecutor.PLUGGABLE_CALL_QUEUE_CLASS_NAME, "org.apache.hadoop.hbase.ipc.TestPluggableQueueImpl");
+
+    PriorityFunction priority = mock(PriorityFunction.class);
+    when(priority.getPriority(any(), any(), any())).thenReturn(HConstants.NORMAL_QOS);
+    SimpleRpcScheduler scheduler = new SimpleRpcScheduler(schedConf, 0, 0, 0, priority,
+      HConstants.QOS_THRESHOLD);
+
+    Field f = scheduler.getClass().getDeclaredField("callExecutor");
+    f.setAccessible(true);
+    assertTrue(f.get(scheduler) instanceof BalancedQueueRpcExecutor);
+  }
+
+  @Test
   public void testPluggableRpcQueueCanListenToConfigurationChanges() throws Exception {
 
     Configuration schedConf = HBaseConfiguration.create();
@@ -316,9 +351,7 @@ public class TestSimpleRpcScheduler {
     testRpcScheduler(queueType, null);
   }
 
-  private void testRpcScheduler(final String queueType, final String pluggableQueueClass)
-    throws Exception {
-
+  private void testRpcScheduler(final String queueType, final String pluggableQueueClass) throws Exception {
     Configuration schedConf = HBaseConfiguration.create();
     schedConf.set(RpcExecutor.CALL_QUEUE_TYPE_CONF_KEY, queueType);
 
@@ -388,7 +421,8 @@ public class TestSimpleRpcScheduler {
       // -> WITH REORDER [10 10 10 10 10 10 50 100] -> 530 (Deadline Queue)
       if (queueType.equals(RpcExecutor.CALL_QUEUE_TYPE_DEADLINE_CONF_VALUE)) {
         assertEquals(530, totalTime);
-      } else if (queueType.equals(RpcExecutor.CALL_QUEUE_TYPE_FIFO_CONF_VALUE)) {
+      } else if (queueType.equals(RpcExecutor.CALL_QUEUE_TYPE_FIFO_CONF_VALUE) ||
+        queueType.equals(RpcExecutor.CALL_QUEUE_TYPE_PLUGGABLE_CONF_VALUE)) {
         assertEquals(930, totalTime);
       }
     } finally {
@@ -662,7 +696,7 @@ public class TestSimpleRpcScheduler {
     assertFalse(executor.dispatch(task));
     //make sure we never internally get a handler, which would skip the queue validation
     Mockito.verify(executor, Mockito.never()).getHandler(Mockito.any(), Mockito.anyDouble(),
-      Mockito.any(), Mockito.any());
+      Mockito.anyInt(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
   }
 
   @Test
@@ -747,7 +781,7 @@ public class TestSimpleRpcScheduler {
       }
     };
 
-    CallRunner cr = new CallRunner(null, putCall) {
+    return new CallRunner(null, putCall) {
       @Override
       public void run() {
         if (sleepTime <= 0) {
@@ -770,7 +804,5 @@ public class TestSimpleRpcScheduler {
       public void drop() {
       }
     };
-
-    return cr;
   }
 }

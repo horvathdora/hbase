@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,8 +25,8 @@ import static org.apache.hadoop.hbase.client.ConnectionUtils.NO_NONCE_GENERATOR;
 import static org.apache.hadoop.hbase.client.ConnectionUtils.getStubKey;
 import static org.apache.hadoop.hbase.client.MetricsConnection.CLIENT_SIDE_METRICS_ENABLED_KEY;
 import static org.apache.hadoop.hbase.client.NonceGenerator.CLIENT_NONCES_ENABLED_KEY;
+import static org.apache.hadoop.hbase.trace.HBaseSemanticAttributes.SERVER_NAME_KEY;
 import static org.apache.hadoop.hbase.util.FutureUtils.addListener;
-
 import io.opentelemetry.api.trace.Span;
 import java.io.IOException;
 import java.net.SocketAddress;
@@ -39,7 +39,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.AuthUtil;
@@ -60,10 +59,8 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hbase.thirdparty.com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.hbase.thirdparty.io.netty.util.HashedWheelTimer;
-
 import org.apache.hadoop.hbase.shaded.protobuf.generated.AdminProtos.AdminService;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ClientProtos.ClientService;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos;
@@ -73,7 +70,7 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProtos.MasterServ
  * The implementation of AsyncConnection.
  */
 @InterfaceAudience.Private
-class AsyncConnectionImpl implements AsyncConnection {
+public class AsyncConnectionImpl implements AsyncConnection {
 
   private static final Logger LOG = LoggerFactory.getLogger(AsyncConnectionImpl.class);
 
@@ -86,11 +83,11 @@ class AsyncConnectionImpl implements AsyncConnection {
 
   final AsyncConnectionConfiguration connConf;
 
-  private final User user;
+  protected final User user;
 
   final ConnectionRegistry registry;
 
-  private final int rpcTimeout;
+  protected final int rpcTimeout;
 
   protected final RpcClient rpcClient;
 
@@ -195,6 +192,14 @@ class AsyncConnectionImpl implements AsyncConnection {
       choreService = new ChoreService("AsyncConn Chore Service");
     }
     return choreService;
+  }
+
+  public User getUser() {
+    return user;
+  }
+
+  public ConnectionRegistry getConnectionRegistry() {
+    return registry;
   }
 
   @Override
@@ -353,7 +358,7 @@ class AsyncConnectionImpl implements AsyncConnection {
       public AsyncTable<ScanResultConsumer> build() {
         RawAsyncTableImpl rawTable =
           new RawAsyncTableImpl(AsyncConnectionImpl.this, RETRY_TIMER, this);
-        return new AsyncTableImpl(AsyncConnectionImpl.this, rawTable, pool);
+        return new AsyncTableImpl(rawTable, pool);
       }
     };
   }
@@ -410,7 +415,7 @@ class AsyncConnectionImpl implements AsyncConnection {
   }
 
   private Hbck getHbckInternal(ServerName masterServer) {
-    Span.current().setAttribute(TraceUtil.SERVER_NAME_KEY, masterServer.getServerName());
+    Span.current().setAttribute(SERVER_NAME_KEY, masterServer.getServerName());
     // we will not create a new connection when creating a new protobuf stub, and for hbck there
     // will be no performance consideration, so for simplification we will create a new stub every
     // time instead of caching the stub here.
@@ -435,13 +440,7 @@ class AsyncConnectionImpl implements AsyncConnection {
 
   @Override
   public Hbck getHbck(ServerName masterServer) {
-    return TraceUtil.trace(new Supplier<Hbck>() {
-
-      @Override
-      public Hbck get() {
-        return getHbckInternal(masterServer);
-      }
-    }, "AsyncConnection.getHbck");
+    return TraceUtil.trace(() -> getHbckInternal(masterServer), "AsyncConnection.getHbck");
   }
 
   Optional<MetricsConnection> getConnectionMetrics() {

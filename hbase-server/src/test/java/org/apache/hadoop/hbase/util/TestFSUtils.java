@@ -52,6 +52,7 @@ import org.apache.hadoop.hdfs.DFSHedgedReadMetrics;
 import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.apache.hadoop.hdfs.client.HdfsDataInputStream;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.ClassRule;
@@ -105,7 +106,31 @@ public class TestFSUtils {
     out.close();
   }
 
-  @Test public void testcomputeHDFSBlocksDistribution() throws Exception {
+  @Test
+  public void testComputeHDFSBlocksDistributionByInputStream() throws Exception {
+    testComputeHDFSBlocksDistribution((fs, testFile) -> {
+      try (FSDataInputStream open = fs.open(testFile)) {
+        assertTrue(open instanceof HdfsDataInputStream);
+        return FSUtils.computeHDFSBlocksDistribution((HdfsDataInputStream) open);
+      }
+    });
+  }
+
+  @Test
+  public void testComputeHDFSBlockDistribution() throws Exception {
+    testComputeHDFSBlocksDistribution((fs, testFile) -> {
+      FileStatus status = fs.getFileStatus(testFile);
+      return FSUtils.computeHDFSBlocksDistribution(fs, status, 0, status.getLen());
+    });
+  }
+
+  @FunctionalInterface
+  interface HDFSBlockDistributionFunction {
+    HDFSBlocksDistribution getForPath(FileSystem fs, Path path) throws IOException;
+  }
+
+  private void testComputeHDFSBlocksDistribution(
+    HDFSBlockDistributionFunction fileToBlockDistribution) throws Exception {
     final int DEFAULT_BLOCK_SIZE = 1024;
     conf.setLong("dfs.blocksize", DEFAULT_BLOCK_SIZE);
     MiniDFSCluster cluster = null;
@@ -129,9 +154,10 @@ public class TestFSUtils {
       boolean ok;
       do {
         ok = true;
-        FileStatus status = fs.getFileStatus(testFile);
+
         HDFSBlocksDistribution blocksDistribution =
-          FSUtils.computeHDFSBlocksDistribution(fs, status, 0, status.getLen());
+          fileToBlockDistribution.getForPath(fs, testFile);
+
         long uniqueBlocksTotalWeight =
           blocksDistribution.getUniqueBlocksTotalWeight();
         for (String host : hosts) {
@@ -163,9 +189,8 @@ public class TestFSUtils {
       long weight;
       long uniqueBlocksTotalWeight;
       do {
-        FileStatus status = fs.getFileStatus(testFile);
         HDFSBlocksDistribution blocksDistribution =
-          FSUtils.computeHDFSBlocksDistribution(fs, status, 0, status.getLen());
+          fileToBlockDistribution.getForPath(fs, testFile);
         uniqueBlocksTotalWeight = blocksDistribution.getUniqueBlocksTotalWeight();
 
         String tophost = blocksDistribution.getTopHosts().get(0);
@@ -197,8 +222,7 @@ public class TestFSUtils {
       final long maxTime = EnvironmentEdgeManager.currentTime() + 2000;
       HDFSBlocksDistribution blocksDistribution;
       do {
-        FileStatus status = fs.getFileStatus(testFile);
-        blocksDistribution = FSUtils.computeHDFSBlocksDistribution(fs, status, 0, status.getLen());
+        blocksDistribution = fileToBlockDistribution.getForPath(fs, testFile);
         // NameNode is informed asynchronously, so we may have a delay. See HBASE-6175
       }
       while (blocksDistribution.getTopHosts().size() != 3 &&
@@ -297,7 +321,7 @@ public class TestFSUtils {
     assertEquals(new FsPermission("700"), filePerm);
 
     // then that the correct file is created
-    Path p = new Path("target" + File.separator + htu.getRandomUUID().toString());
+    Path p = new Path("target" + File.separator + HBaseTestingUtil.getRandomUUID().toString());
     try {
       FSDataOutputStream out = FSUtils.create(conf, fs, p, filePerm, null);
       out.close();
@@ -316,7 +340,7 @@ public class TestFSUtils {
     conf.setBoolean(HConstants.ENABLE_DATA_FILE_UMASK, true);
     FsPermission perms = CommonFSUtils.getFilePermissions(fs, conf, HConstants.DATA_FILE_UMASK_KEY);
     // then that the correct file is created
-    String file = htu.getRandomUUID().toString();
+    String file = HBaseTestingUtil.getRandomUUID().toString();
     Path p = new Path(htu.getDataTestDir(), "temptarget" + File.separator + file);
     Path p1 = new Path(htu.getDataTestDir(), "temppath" + File.separator + file);
     try {
@@ -357,7 +381,7 @@ public class TestFSUtils {
     FileSystem fs = FileSystem.get(conf);
     Path testDir = htu.getDataTestDirOnTestFS("testArchiveFile");
 
-    String file = htu.getRandomUUID().toString();
+    String file = HBaseTestingUtil.getRandomUUID().toString();
     Path p = new Path(testDir, file);
 
     FSDataOutputStream out = fs.create(p);
@@ -371,7 +395,7 @@ public class TestFSUtils {
     mockEnv.setValue(expect);
     EnvironmentEdgeManager.injectEdge(mockEnv);
     try {
-      String dstFile = htu.getRandomUUID().toString();
+      String dstFile = HBaseTestingUtil.getRandomUUID().toString();
       Path dst = new Path(testDir , dstFile);
 
       assertTrue(CommonFSUtils.renameAndSetModifyTime(fs, p, dst));
@@ -453,7 +477,7 @@ public class TestFSUtils {
           conf.get(HConstants.WAL_STORAGE_POLICY, HConstants.DEFAULT_WAL_STORAGE_POLICY);
       CommonFSUtils.setStoragePolicy(fs, testDir, storagePolicy);
 
-      String file =htu.getRandomUUID().toString();
+      String file = HBaseTestingUtil.getRandomUUID().toString();
       Path p = new Path(testDir, file);
       WriteDataToHDFS(fs, p, 4096);
       HFileSystem hfs = new HFileSystem(fs);
@@ -468,7 +492,7 @@ public class TestFSUtils {
       } else {
         Assert.assertEquals(policy, policySet);
       }
-      // will assert existance before deleting.
+      // will assert existence before deleting.
       cleanupFile(fs, testDir);
     } finally {
       cluster.shutdown();
@@ -538,11 +562,12 @@ public class TestFSUtils {
   // Below is taken from TestPread over in HDFS.
   static final int blockSize = 4096;
   static final long seed = 0xDEADBEEFL;
+  private Random rand = new Random(); // This test depends on Random#setSeed
 
   private void pReadFile(FileSystem fileSys, Path name) throws IOException {
     FSDataInputStream stm = fileSys.open(name);
     byte[] expected = new byte[12 * blockSize];
-    Random rand = new Random(seed);
+    rand.setSeed(seed);
     rand.nextBytes(expected);
     // do a sanity check. Read first 4K bytes
     byte[] actual = new byte[4096];

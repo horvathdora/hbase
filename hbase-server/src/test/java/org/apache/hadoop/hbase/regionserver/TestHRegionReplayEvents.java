@@ -39,7 +39,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Random;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.Path;
@@ -62,7 +61,6 @@ import org.apache.hadoop.hbase.client.RegionInfoBuilder;
 import org.apache.hadoop.hbase.client.TableDescriptor;
 import org.apache.hadoop.hbase.client.TableDescriptorBuilder;
 import org.apache.hadoop.hbase.executor.ExecutorService;
-import org.apache.hadoop.hbase.executor.ExecutorService.ExecutorConfig;
 import org.apache.hadoop.hbase.executor.ExecutorType;
 import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.io.hfile.HFileContextBuilder;
@@ -113,6 +111,7 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.WALProtos.StoreDescript
  * Tests of HRegion methods for replaying flush, compaction, region open, etc events for secondary
  * region replicas
  */
+@SuppressWarnings("deprecation")
 @Category(LargeTests.class)
 public class TestHRegionReplayEvents {
 
@@ -1521,9 +1520,8 @@ public class TestHRegionReplayEvents {
     primaryRegion = HRegion.openHRegion(rootDir, primaryHri, htd, walPrimary, CONF, rss, null);
 
     // bulk load a file into primary region
-    Random random = new Random();
     byte[] randomValues = new byte[20];
-    random.nextBytes(randomValues);
+    Bytes.random(randomValues);
     Path testPath = TEST_UTIL.getDataTestDirOnTestFS();
 
     List<Pair<byte[], String>> familyPaths = new ArrayList<>();

@@ -17,6 +17,7 @@
  */
 package org.apache.hadoop.hbase.master.procedure;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.util.List;
@@ -32,6 +33,7 @@ import org.apache.hadoop.hbase.client.TableDescriptorBuilder;
 import org.apache.hadoop.hbase.procedure2.Procedure;
 import org.apache.hadoop.hbase.procedure2.ProcedureExecutor;
 import org.apache.hadoop.hbase.procedure2.ProcedureTestingUtility;
+import org.apache.hadoop.hbase.regionserver.storefiletracker.StoreFileTrackerFactory;
 import org.apache.hadoop.hbase.snapshot.SnapshotTestingUtils;
 import org.apache.hadoop.hbase.testclassification.MasterTests;
 import org.apache.hadoop.hbase.testclassification.MediumTests;
@@ -94,8 +96,11 @@ public class TestCloneSnapshotProcedure extends TestTableDDLProcedureBase {
     return 1;
   }
 
-  public static TableDescriptor createTableDescriptor(TableName tableName, byte[]... family) {
-    TableDescriptorBuilder builder = TableDescriptorBuilder.newBuilder(tableName);
+  private static TableDescriptor createTableDescriptor(TableName tableName, byte[]... family) {
+    TableDescriptorBuilder builder =
+      TableDescriptorBuilder.newBuilder(tableName).setValue(StoreFileTrackerFactory.TRACKER_IMPL,
+        UTIL.getConfiguration().get(StoreFileTrackerFactory.TRACKER_IMPL,
+          StoreFileTrackerFactory.Trackers.DEFAULT.name()));
     Stream.of(family).map(ColumnFamilyDescriptorBuilder::of)
       .forEachOrdered(builder::setColumnFamily);
     return builder.build();
@@ -160,6 +165,31 @@ public class TestCloneSnapshotProcedure extends TestTableDDLProcedureBase {
     MasterProcedureTestingUtility.validateTableIsEnabled(
       UTIL.getHBaseCluster().getMaster(),
       clonedTableName);
+  }
+
+  @Test
+  public void testRecoverWithRestoreAclFlag() throws Exception {
+    // This test is to solve the problems mentioned in HBASE-26462,
+    // this needs to simulate the case of CloneSnapshotProcedure failure and recovery,
+    // and verify whether 'restoreAcl' flag can obtain the correct value.
+
+    final ProcedureExecutor<MasterProcedureEnv> procExec = getMasterProcedureExecutor();
+    final TableName clonedTableName = TableName.valueOf("testRecoverWithRestoreAclFlag");
+    final TableDescriptor htd = createTableDescriptor(clonedTableName, CF);
+
+    SnapshotProtos.SnapshotDescription snapshotDesc = getSnapshot();
+    ProcedureTestingUtility.setKillIfHasParent(procExec, false);
+    ProcedureTestingUtility.setKillAndToggleBeforeStoreUpdate(procExec, true);
+
+    // Start the Clone snapshot procedure (with restoreAcl 'true') && kill the executor
+    long procId = procExec.submitProcedure(
+      new CloneSnapshotProcedure(procExec.getEnvironment(), htd, snapshotDesc, true));
+
+    MasterProcedureTestingUtility.testRecoveryAndDoubleExecution(procExec, procId);
+
+    CloneSnapshotProcedure result = (CloneSnapshotProcedure)procExec.getResult(procId);
+    // check whether the 'restoreAcl' flag is true after deserialization from Pb.
+    assertEquals(true, result.getRestoreAcl());
   }
 
   @Test

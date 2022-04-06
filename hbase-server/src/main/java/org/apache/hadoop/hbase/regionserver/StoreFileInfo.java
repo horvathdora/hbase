@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -41,6 +42,7 @@ import org.apache.hadoop.hbase.io.hfile.ReaderContext.ReaderType;
 import org.apache.hadoop.hbase.io.hfile.ReaderContextBuilder;
 import org.apache.hadoop.hbase.mob.MobUtils;
 import org.apache.hadoop.hbase.util.FSUtils;
+import org.apache.hadoop.hbase.util.Pair;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,7 +51,7 @@ import org.slf4j.LoggerFactory;
  * Describe a StoreFile (hfile, reference, link)
  */
 @InterfaceAudience.Private
-public class StoreFileInfo {
+public class StoreFileInfo implements Configurable {
   private static final Logger LOG = LoggerFactory.getLogger(StoreFileInfo.class);
 
   /**
@@ -77,7 +79,7 @@ public class StoreFileInfo {
   public static final boolean DEFAULT_STORE_FILE_READER_NO_READAHEAD = false;
 
   // Configuration
-  private final Configuration conf;
+  private Configuration conf;
 
   // FileSystem handle
   private final FileSystem fs;
@@ -222,6 +224,16 @@ public class StoreFileInfo {
     this.link = link;
     this.noReadahead = this.conf.getBoolean(STORE_FILE_READER_NO_READAHEAD,
       DEFAULT_STORE_FILE_READER_NO_READAHEAD);
+  }
+
+  @Override
+  public Configuration getConf() {
+    return conf;
+  }
+
+  @Override
+  public void setConf(Configuration conf) {
+    this.conf = conf;
   }
 
   /**
@@ -517,6 +529,24 @@ public class StoreFileInfo {
         nameStrippedOfSuffix);
   }
 
+  /*
+   * Return region and file name referred to by a Reference.
+   * @param referenceFile HFile name which is a Reference.
+   * @return Calculated referenced region and file name.
+   * @throws IllegalArgumentException when referenceFile regex fails to match.
+   */
+  public static Pair<String, String> getReferredToRegionAndFile(final String referenceFile) {
+    Matcher m = REF_NAME_PATTERN.matcher(referenceFile);
+    if (m == null || !m.matches()) {
+      LOG.warn("Failed match of store file name {}", referenceFile);
+      throw new IllegalArgumentException("Failed match of store file name " + referenceFile);
+    }
+    String referencedRegion = m.group(2);
+    String referencedFile = m.group(1);
+    LOG.trace("reference {} to region={} file={}", referenceFile, referencedRegion, referencedFile);
+    return new Pair<>(referencedRegion, referencedFile);
+  }
+
   /**
    * Validate the store file name.
    * @param fileName name of the file to validate
@@ -659,10 +689,6 @@ public class StoreFileInfo {
     return this.fs;
   }
 
-  Configuration getConf() {
-    return this.conf;
-  }
-
   boolean isNoReadahead() {
     return this.noReadahead;
   }
@@ -698,4 +724,5 @@ public class StoreFileInfo {
   public void initHFileInfo(ReaderContext context) throws IOException {
     this.hfileInfo = new HFileInfo(context, conf);
   }
+
 }

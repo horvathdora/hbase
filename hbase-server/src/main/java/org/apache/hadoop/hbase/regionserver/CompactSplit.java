@@ -27,7 +27,9 @@ import java.io.StringWriter;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.RejectedExecutionHandler;
@@ -92,6 +94,7 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
   private volatile ThreadPoolExecutor splits;
 
   private volatile ThroughputController compactionThroughputController;
+  private volatile Set<String> underCompactionStores = ConcurrentHashMap.newKeySet();
 
   private volatile boolean compactionsEnabled;
   /**
@@ -111,6 +114,15 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
     // compaction throughput controller
     this.compactionThroughputController =
         CompactionThroughputControllerFactory.create(server, conf);
+  }
+
+  // only for test
+  public CompactSplit(Configuration conf) {
+    this.server = null;
+    this.conf = conf;
+    this.compactionsEnabled = this.conf.getBoolean(HBASE_REGION_SERVER_ENABLE_COMPACTION,true);
+    createCompactionExecutors();
+    createSplitExcecutors();
   }
 
   private void createSplitExcecutors() {
@@ -188,7 +200,9 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
   }
 
   public synchronized boolean requestSplit(final Region r) {
-    // don't split regions that are blocking
+    // Don't split regions that are blocking is the default behavior.
+    // But in some circumstances, split here is needed to prevent the region size from
+    // continuously growing, as well as the number of store files, see HBASE-26242.
     HRegion hr = (HRegion)r;
     try {
       if (shouldSplitRegion() && hr.getCompactPriority() >= PRIORITY_USER) {
@@ -206,14 +220,14 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
     return false;
   }
 
-  public synchronized void requestSplit(final Region r, byte[] midKey) {
+  private synchronized void requestSplit(final Region r, byte[] midKey) {
     requestSplit(r, midKey, null);
   }
 
   /*
    * The User parameter allows the split thread to assume the correct user identity
    */
-  public synchronized void requestSplit(final Region r, byte[] midKey, User user) {
+  private synchronized void requestSplit(final Region r, byte[] midKey, User user) {
     if (midKey == null) {
       LOG.debug("Region " + r.getRegionInfo().getRegionNameAsString() +
         " not splittable because midkey=null");
@@ -238,7 +252,8 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
     createCompactionExecutors();
   }
 
-  private interface CompactionCompleteTracker {
+  // set protected for test
+  protected interface CompactionCompleteTracker {
 
     default void completed(Store store) {
     }
@@ -316,7 +331,8 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
     }
   }
 
-  private void requestCompactionInternal(HRegion region, HStore store, String why, int priority,
+  // set protected for test
+  protected void requestCompactionInternal(HRegion region, HStore store, String why, int priority,
       boolean selectNow, CompactionLifeCycleTracker tracker,
       CompactionCompleteTracker completeTracker, User user) throws IOException {
     if (this.server.isStopped() || (region.getTableDescriptor() != null &&
@@ -364,6 +380,12 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
     }
     pool.execute(
       new CompactionRunner(store, region, compaction, tracker, completeTracker, pool, user));
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Add compact mark for store {}, priority={}, current under compaction "
+          + "store size is {}", getStoreNameForUnderCompaction(store), priority,
+        underCompactionStores.size());
+    }
+    underCompactionStores.add(getStoreNameForUnderCompaction(store));
     region.incrementCompactionsQueuedCount();
     if (LOG.isDebugEnabled()) {
       String type = (pool == shortCompactions) ? "Small " : "Large ";
@@ -377,8 +399,18 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
       DUMMY_COMPLETE_TRACKER, null);
   }
 
-  public synchronized void requestSystemCompaction(HRegion region, HStore store, String why)
+  public void requestSystemCompaction(HRegion region, HStore store, String why)
       throws IOException {
+    requestSystemCompaction(region, store, why, false);
+  }
+
+  public synchronized void requestSystemCompaction(HRegion region, HStore store, String why,
+      boolean giveUpIfRequestedOrCompacting) throws IOException {
+    if (giveUpIfRequestedOrCompacting && isUnderCompaction(store)) {
+      LOG.debug("Region {} store {} is under compaction now, skip to request compaction", region,
+        store.getColumnFamilyName());
+      return;
+    }
     requestCompactionInternal(region, store, why, NO_PRIORITY, false,
       CompactionLifeCycleTracker.DUMMY, DUMMY_COMPLETE_TRACKER, null);
   }
@@ -457,9 +489,9 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
   }
 
   private boolean shouldSplitRegion() {
-    if(server.getNumberOfOnlineRegions() > 0.9*regionSplitLimit) {
+    if (server.getNumberOfOnlineRegions() > 0.9 * regionSplitLimit) {
       LOG.warn("Total number of regions is approaching the upper limit " + regionSplitLimit + ". "
-          + "Please consider taking a look at http://hbase.apache.org/book.html#ops.regionmgt");
+        + "Please consider taking a look at http://hbase.apache.org/book.html#ops.regionmgt");
     }
     return (regionSplitLimit > server.getNumberOfOnlineRegions());
   }
@@ -469,6 +501,13 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
    */
   public int getRegionSplitLimit() {
     return this.regionSplitLimit;
+  }
+
+  /**
+   * Check if this store is under compaction
+   */
+  public boolean isUnderCompaction(final HStore s) {
+    return underCompactionStores.contains(getStoreNameForUnderCompaction(s));
   }
 
   private static final Comparator<Runnable> COMPARATOR =
@@ -620,11 +659,14 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
               this + "; duration=" + StringUtils.formatTimeDiff(now, start));
         if (completed) {
           // degenerate case: blocked regions require recursive enqueues
-          if (store.getCompactPriority() <= 0) {
+          if (region.getCompactPriority() < Store.PRIORITY_USER
+            && store.getCompactPriority() <= 0) {
             requestSystemCompaction(region, store, "Recursive enqueue");
           } else {
             // see if the compaction has caused us to exceed max region size
-            requestSplit(region);
+            if (!requestSplit(region) && store.getCompactPriority() <= 0) {
+              requestSystemCompaction(region, store, "Recursive enqueue");
+            }
           }
         }
       } catch (IOException ex) {
@@ -650,13 +692,22 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
 
     @Override
     public void run() {
-      Preconditions.checkNotNull(server);
-      if (server.isStopped() || (region.getTableDescriptor() != null &&
-        !region.getTableDescriptor().isCompactionEnabled())) {
-        region.decrementCompactionsQueuedCount();
-        return;
+      try {
+        Preconditions.checkNotNull(server);
+        if (server.isStopped() || (region.getTableDescriptor() != null &&
+            !region.getTableDescriptor().isCompactionEnabled())) {
+          region.decrementCompactionsQueuedCount();
+          return;
+        }
+        doCompaction(user);
+      } finally {
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Remove under compaction mark for store: {}",
+            store.getHRegion().getRegionInfo().getEncodedName() + ":" + store
+              .getColumnFamilyName());
+        }
+        underCompactionStores.remove(getStoreNameForUnderCompaction(store));
       }
-      doCompaction(user);
     }
 
     private String formatStackTrace(Exception ex) {
@@ -822,6 +873,12 @@ public class CompactSplit implements CompactionRequester, PropagatingConfigurati
    */
   ThreadPoolExecutor getShortCompactions() {
     return shortCompactions;
+  }
+
+  private String getStoreNameForUnderCompaction(HStore store) {
+    return String.format("%s:%s",
+      store.getHRegion() != null ? store.getHRegion().getRegionInfo().getEncodedName() : "",
+      store.getColumnFamilyName());
   }
 
 }

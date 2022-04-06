@@ -25,7 +25,7 @@
   <parent>
     <artifactId>hbase-build-configuration</artifactId>
     <groupId>org.apache.hbase</groupId>
-    <version>3.0.0-alpha-2-SNAPSHOT</version>
+    <version>3.0.0-alpha-3-SNAPSHOT</version>
     <relativePath>../hbase-build-configuration</relativePath>
   </parent>
   <artifactId>hbase-shaded</artifactId>
@@ -97,6 +97,7 @@
                 <debug-print-included-work-info>${license.debug.print.included}</debug-print-included-work-info>
                 <bundled-dependencies>${license.bundles.dependencies}</bundled-dependencies>
                 <bundled-jquery>${license.bundles.jquery}</bundled-jquery>
+                <bundled-vega>${license.bundles.vega}</bundled-vega>
                 <bundled-logo>${license.bundles.logo}</bundled-logo>
                 <bundled-bootstrap>${license.bundles.bootstrap}</bundled-bootstrap>
               </properties>
@@ -451,6 +452,10 @@
                     <pattern>net/</pattern>
                     <shadedPattern>${shaded.prefix}.net.</shadedPattern>
                   </relocation>
+                  <relocation>
+                    <pattern>org.agrona</pattern>
+                    <shadedPattern>${shaded.prefix}.org.agrona</shadedPattern>
+                  </relocation>
                 </relocations>
                 <transformers>
                   <!-- Need to filter out some extraneous license files.
@@ -521,8 +526,6 @@
                       <!-- We already concat NOTICE, safe to drop individual ones -->
                       <exclude>LICENSE</exclude>
                       <exclude>NOTICE</exclude>
-                      <!-- Remove the shaded guava added in hadoop-3.3.1+-->
-                      <exclude>org/apache/hadoop/thirdparty/**/*</exclude>
                     </excludes>
                   </filter>
                   <filter>

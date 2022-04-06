@@ -32,9 +32,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
-
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.RandomUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
@@ -54,6 +52,7 @@ import org.apache.hadoop.hbase.replication.ReplicationStorageFactory;
 import org.apache.hadoop.hbase.replication.master.ReplicationLogCleaner;
 import org.apache.hadoop.hbase.testclassification.MasterTests;
 import org.apache.hadoop.hbase.testclassification.MediumTests;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.MockServer;
 import org.apache.hadoop.hbase.zookeeper.RecoverableZooKeeper;
@@ -94,7 +93,7 @@ public class TestLogsCleaner {
   public static void setUpBeforeClass() throws Exception {
     TEST_UTIL.startMiniZKCluster();
     TEST_UTIL.startMiniDFSCluster(1);
-    POOL = new DirScanPool(TEST_UTIL.getConfiguration());
+    POOL = DirScanPool.getLogCleanerScanPool(TEST_UTIL.getConfiguration());
   }
 
   @AfterClass
@@ -347,8 +346,9 @@ public class TestLogsCleaner {
     for (int i = 0; i < numOfFiles; i++) {
       // size of each file is 1M, 2M, or 3M
       int xMega = 1 + ThreadLocalRandom.current().nextInt(1, 4);
+      byte[] M = new byte[Math.toIntExact(FileUtils.ONE_MB * xMega)];
+      Bytes.random(M);
       try (FSDataOutputStream fsdos = fs.create(new Path(parentDir, "file-" + i))) {
-        byte[] M = RandomUtils.nextBytes(Math.toIntExact(FileUtils.ONE_MB * xMega));
         fsdos.write(M);
       }
     }

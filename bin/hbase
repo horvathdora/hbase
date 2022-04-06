@@ -492,9 +492,19 @@ add_jdk11_deps_to_classpath() {
   done
 }
 
-enable_trace() {
-  agent_jar=$(find lib/trace -type f -name "opentelemetry-javaagent-*")
-  HBASE_OPTS="$HBASE_OPTS -javaagent:$agent_jar $HBASE_TRACE_OPTS"
+add_opentelemetry_agent() {
+  if [ -e "${OPENTELEMETRY_JAVAAGENT_PATH}" ] ; then
+    agent_jar="${OPENTELEMETRY_JAVAAGENT_PATH}"
+  elif ! agent_jar=$(find -L "${HBASE_HOME}/lib/trace" -type f -name "opentelemetry-javaagent-*" 2>/dev/null); then
+    # must be dev environment
+    f="${HBASE_HOME}/hbase-build-configuration/target/cached_classpath.txt"
+    if [ ! -f "${f}" ]; then
+      echo "As this is a development environment, we need ${f} to be generated from maven (command: mvn install -DskipTests)"
+      exit 1
+    fi
+    agent_jar=$(tr ':' '\n' < "${f}" | grep opentelemetry-javaagent)
+  fi
+  HBASE_OPTS="$HBASE_OPTS -javaagent:$agent_jar"
 }
 
 #Add the development env class path stuff
@@ -557,6 +567,7 @@ elif [ "$COMMAND" = 'jshell' ] ; then
   CLASS='jdk.internal.jshell.tool.JShellToolProvider'
   # set default values for HBASE_JSHELL_ARGS
   read -r -a JSHELL_ARGS <<< "${HBASE_JSHELL_ARGS:-"--startup DEFAULT --startup PRINTING --startup ${HBASE_HOME}/bin/hbase_startup.jsh"}"
+  HBASE_OPTS="$HBASE_OPTS $HBASE_JSHELL_OPTS"
 elif [ "$COMMAND" = "hbck" ] ; then
   # Look for the -j /path/to/HBCK2.jar parameter. Else pass through to hbck.
   case "${1}" in
@@ -740,12 +751,19 @@ elif [ "$COMMAND" = "hbtop" ] ; then
     done
   fi
 
-  if [ -f "${HBASE_HOME}/conf/log4j-hbtop.properties" ] ; then
-    HBASE_HBTOP_OPTS="${HBASE_HBTOP_OPTS} -Dlog4j.configuration=file:${HBASE_HOME}/conf/log4j-hbtop.properties"
+  if [ -f "${HBASE_HOME}/conf/log4j2-hbtop.properties" ] ; then
+    HBASE_HBTOP_OPTS="${HBASE_HBTOP_OPTS} -Dlog4j2.configurationFile=file:${HBASE_HOME}/conf/log4j2-hbtop.properties"
   fi
   HBASE_OPTS="${HBASE_OPTS} ${HBASE_HBTOP_OPTS}"
 else
   CLASS=$COMMAND
+if [[ "$CLASS" =~ .*IntegrationTest.* ]] ; then
+    for f in ${HBASE_HOME}/lib/test/*.jar; do
+      if [ -f "${f}" ]; then
+        CLASSPATH="${CLASSPATH}:${f}"
+      fi
+    done
+  fi
 fi
 
 # Add lib/jdk11 jars to the classpath
@@ -801,8 +819,10 @@ elif [ "${DEBUG}" = "true" ]; then
 fi
 
 if [[ -n "${HBASE_TRACE_OPTS}" ]]; then
-  echo "Attach opentelemetry agent to enable trace"
-  enable_trace
+  if [ "${DEBUG}" = "true" ]; then
+    echo "Attaching opentelemetry agent"
+  fi
+  add_opentelemetry_agent
 fi
 
 # Have JVM dump heap if we run out of memory.  Files will be 'launch directory'
@@ -813,11 +833,7 @@ HBASE_OPTS="$HBASE_OPTS -Dhbase.log.dir=$HBASE_LOG_DIR"
 HBASE_OPTS="$HBASE_OPTS -Dhbase.log.file=$HBASE_LOGFILE"
 HBASE_OPTS="$HBASE_OPTS -Dhbase.home.dir=$HBASE_HOME"
 HBASE_OPTS="$HBASE_OPTS -Dhbase.id.str=$HBASE_IDENT_STRING"
-# log4j2 does not support setting log level and appender at once, so we need to split HBASE_ROOT_LOGGER
-HBASE_ROOT_LOGGER=${HBASE_ROOT_LOGGER:-INFO,console}
-array=(${HBASE_ROOT_LOGGER//,/ })
-HBASE_OPTS="$HBASE_OPTS -Dhbase.root.logger.level=${array[0]}"
-HBASE_OPTS="$HBASE_OPTS -Dhbase.root.logger.appender=${array[1]}"
+HBASE_OPTS="$HBASE_OPTS -Dhbase.root.logger=${HBASE_ROOT_LOGGER:-INFO,console}"
 if [ "x$JAVA_LIBRARY_PATH" != "x" ]; then
   HBASE_OPTS="$HBASE_OPTS -Djava.library.path=$JAVA_LIBRARY_PATH"
   export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$JAVA_LIBRARY_PATH"
@@ -825,13 +841,10 @@ fi
 
 # Enable security logging on the master and regionserver only
 if [ "$COMMAND" = "master" ] || [ "$COMMAND" = "regionserver" ]; then
-  HBASE_SECURITY_LOGGER=${HBASE_SECURITY_LOGGER:-INFO,RFAS}
+  HBASE_OPTS="$HBASE_OPTS -Dhbase.security.logger=${HBASE_SECURITY_LOGGER:-INFO,RFAS}"
 else
-  HBASE_SECURITY_LOGGER=${HBASE_SECURITY_LOGGER:-INFO,NullAppender}
+  HBASE_OPTS="$HBASE_OPTS -Dhbase.security.logger=${HBASE_SECURITY_LOGGER:-INFO,NullAppender}"
 fi
-array=(${HBASE_SECURITY_LOGGER//,/ })
-HBASE_OPTS="$HBASE_OPTS -Dhbase.security.logger.level=${array[0]}"
-HBASE_OPTS="$HBASE_OPTS -Dhbase.security.logger.appender=${array[1]}"
 
 HEAP_SETTINGS="$JAVA_HEAP_MAX $JAVA_OFFHEAP_MAX"
 # by now if we're running a command it means we need logging

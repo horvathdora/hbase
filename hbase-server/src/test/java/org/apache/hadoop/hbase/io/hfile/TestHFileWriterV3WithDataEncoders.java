@@ -24,7 +24,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Random;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
@@ -73,9 +72,8 @@ public class TestHFileWriterV3WithDataEncoders {
 
   private static final Logger LOG =
     LoggerFactory.getLogger(TestHFileWriterV3WithDataEncoders.class);
-
-  private static final HBaseTestingUtil TEST_UTIL =
-    new HBaseTestingUtil();
+  private static final HBaseTestingUtil TEST_UTIL = new HBaseTestingUtil();
+  private static final Random RNG = new Random(9713312); // Just a fixed seed.
 
   private Configuration conf;
   private FileSystem fs;
@@ -150,11 +148,8 @@ public class TestHFileWriterV3WithDataEncoders {
       .withFileContext(context)
       .create();
 
-    Random rand = new Random(9713312); // Just a fixed seed.
     List<KeyValue> keyValues = new ArrayList<>(entryCount);
-
-    writeKeyValues(entryCount, useTags, writer, rand, keyValues);
-
+    writeKeyValues(entryCount, useTags, writer, RNG, keyValues);
 
     FSDataInputStream fsdis = fs.open(hfilePath);
 
@@ -176,7 +171,7 @@ public class TestHFileWriterV3WithDataEncoders {
       .withFileSystem(fs)
       .withFileSize(fileSize).build();
     HFileBlock.FSReader blockReader =
-      new HFileBlock.FSReaderImpl(readerContext, meta, ByteBuffAllocator.HEAP);
+      new HFileBlock.FSReaderImpl(readerContext, meta, ByteBuffAllocator.HEAP, conf);
     // Comparator class name is stored in the trailer in version 3.
     CellComparator comparator = trailer.createComparator();
     HFileBlockIndex.BlockIndexReader dataBlockIndexReader =
@@ -277,7 +272,7 @@ public class TestHFileWriterV3WithDataEncoders {
       origBlock.limit(pos + block.getUncompressedSizeWithoutHeader() - DataBlockEncoding.ID_SIZE);
       ByteBuff buf =  origBlock.slice();
       DataBlockEncoder.EncodedSeeker seeker =
-        encoder.createSeeker(encoder.newDataBlockDecodingContext(meta));
+        encoder.createSeeker(encoder.newDataBlockDecodingContext(conf, meta));
       seeker.setCurrentBuffer(buf);
       Cell res = seeker.getCell();
       KeyValue kv = keyValues.get(entriesRead);

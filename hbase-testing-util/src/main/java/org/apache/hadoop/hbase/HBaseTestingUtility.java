@@ -44,6 +44,7 @@ import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -1407,7 +1408,6 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
 
   /**
    * Flushes all caches in the mini hbase cluster
-   * @throws IOException
    */
   public void flush() throws IOException {
     getMiniHBaseCluster().flushcache();
@@ -1415,7 +1415,6 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
 
   /**
    * Flushes all caches in the mini hbase cluster
-   * @throws IOException
    */
   public void flush(TableName tableName) throws IOException {
     getMiniHBaseCluster().flushcache(tableName);
@@ -1423,7 +1422,6 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
 
   /**
    * Compact all regions in the mini hbase cluster
-   * @throws IOException
    */
   public void compact(boolean major) throws IOException {
     getMiniHBaseCluster().compact(major);
@@ -1431,7 +1429,6 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
 
   /**
    * Compact all of a table's reagion in the mini hbase cluster
-   * @throws IOException
    */
   public void compact(TableName tableName, boolean major) throws IOException {
     getMiniHBaseCluster().compact(tableName, major);
@@ -2265,10 +2262,9 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
 
   public void loadRandomRows(final Table t, final byte[] f, int rowSize, int totalRows)
       throws IOException {
-    Random r = new Random();
     byte[] row = new byte[rowSize];
     for (int i = 0; i < totalRows; i++) {
-      r.nextBytes(row);
+      Bytes.random(row);
       Put put = new Put(row);
       put.addColumn(f, new byte[]{0}, new byte[]{0});
       t.put(put);
@@ -3133,7 +3129,7 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
       // There are chances that before we get the region for the table from an RS the region may
       // be going for CLOSE.  This may be because online schema change is enabled
       if (regCount > 0) {
-        idx = random.nextInt(regCount);
+        idx = ThreadLocalRandom.current().nextInt(regCount);
         // if we have just tried this region, there is no need to try again
         if (attempted.contains(idx)) {
           continue;
@@ -3716,7 +3712,6 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
         numRowsPerFlush + " rows per flush, maxVersions=" +  maxVersions +
         "\n");
 
-    final Random rand = new Random(tableName.hashCode() * 17L + 12938197137L);
     final int numCF = families.size();
     final byte[][] cfBytes = new byte[numCF][];
     {
@@ -3744,6 +3739,7 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
 
     BufferedMutator mutator = getConnection().getBufferedMutator(tableName);
 
+    final Random rand = ThreadLocalRandom.current();
     for (int iFlush = 0; iFlush < numFlushes; ++iFlush) {
       for (int iRow = 0; iRow < numRowsPerFlush; ++iRow) {
         final byte[] row = Bytes.toBytes(String.format(keyFormat,
@@ -3790,7 +3786,7 @@ public class HBaseTestingUtility extends HBaseZKTestingUtility {
     return HBaseCommonTestingUtility.randomFreePort();
   }
   public static String randomMultiCastAddress() {
-    return "226.1.1." + random.nextInt(254);
+    return "226.1.1." + ThreadLocalRandom.current().nextInt(254);
   }
 
   public static void waitForHostPort(String host, int port)

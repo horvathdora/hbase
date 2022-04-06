@@ -74,6 +74,7 @@ import org.apache.hadoop.hbase.client.Durability;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Increment;
 import org.apache.hadoop.hbase.client.Mutation;
+import org.apache.hadoop.hbase.client.OperationWithAttributes;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.RegionInfo;
 import org.apache.hadoop.hbase.client.RegionReplicaUtil;
@@ -196,6 +197,9 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.AdminProtos.UpdateFavor
 import org.apache.hadoop.hbase.shaded.protobuf.generated.AdminProtos.WALEntry;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.AdminProtos.WarmupRegionRequest;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.AdminProtos.WarmupRegionResponse;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.BootstrapNodeProtos.BootstrapNodeService;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.BootstrapNodeProtos.GetAllBootstrapNodesRequest;
+import org.apache.hadoop.hbase.shaded.protobuf.generated.BootstrapNodeProtos.GetAllBootstrapNodesResponse;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ClientProtos;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ClientProtos.Action;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ClientProtos.BulkLoadHFileRequest;
@@ -244,7 +248,7 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.WALProtos.RegionEventDe
  */
 @InterfaceAudience.Private
 public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
-  implements ClientService.BlockingInterface {
+  implements ClientService.BlockingInterface, BootstrapNodeService.BlockingInterface {
 
   private static final Logger LOG = LoggerFactory.getLogger(RSRpcServices.class);
 
@@ -474,6 +478,7 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
         return;
       }
       LOG.info("Scanner lease {} expired {}", this.scannerName, rsh);
+      server.getMetrics().incrScannerLeaseExpired();
       RegionScanner s = rsh.s;
       HRegion region = null;
       try {
@@ -1085,15 +1090,15 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
   /**
    * Execute a list of Put/Delete mutations. The function returns OperationStatus instead of
    * constructing MultiResponse to save a possible loop if caller doesn't need MultiResponse.
-   * @param region
-   * @param mutations
-   * @param replaySeqId
    * @return an array of OperationStatus which internally contains the OperationStatusCode and the
    *         exceptionMessage if any
-   * @throws IOException
+   * @deprecated Since 3.0.0, will be removed in 4.0.0. We do not use this method for replaying
+   *             edits for secondary replicas any more, see
+   *             {@link #replicateToReplica(RpcController, ReplicateWALEntryRequest)}.
    */
-  private OperationStatus [] doReplayBatchOp(final HRegion region,
-      final List<MutationReplay> mutations, long replaySeqId) throws IOException {
+  @Deprecated
+  private OperationStatus[] doReplayBatchOp(final HRegion region,
+    final List<MutationReplay> mutations, long replaySeqId) throws IOException {
     long before = EnvironmentEdgeManager.currentTime();
     boolean batchContainsPuts = false, batchContainsDelete = false;
     try {
@@ -1275,6 +1280,7 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
     StringBuilder builder = new StringBuilder();
     builder.append("table: ").append(scanner.getRegionInfo().getTable().getNameAsString());
     builder.append(" region: ").append(scanner.getRegionInfo().getRegionNameAsString());
+    builder.append(" operation_id: ").append(scanner.getOperationId());
     return builder.toString();
   }
 
@@ -1287,6 +1293,12 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
       StringBuilder builder = new StringBuilder();
       builder.append("table: ").append(region.getRegionInfo().getTable().getNameAsString());
       builder.append(" region: ").append(region.getRegionInfo().getRegionNameAsString());
+      for (NameBytesPair pair : request.getScan().getAttributeList()) {
+        if (OperationWithAttributes.ID_ATRIBUTE.equals(pair.getName())) {
+          builder.append(" operation_id: ").append(Bytes.toString(pair.getValue().toByteArray()));
+          break;
+        }
+      }
       return builder.toString();
     } catch (IOException ignored) {
       return null;
@@ -2072,20 +2084,30 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
     return response;
   }
 
+  private CellScanner getAndReset(RpcController controller) {
+    HBaseRpcController hrc = (HBaseRpcController) controller;
+    CellScanner cells = hrc.cellScanner();
+    hrc.setCellScanner(null);
+    return cells;
+  }
+
   /**
    * Replay the given changes when distributedLogReplay WAL edits from a failed RS. The guarantee is
    * that the given mutations will be durable on the receiving RS if this method returns without any
    * exception.
    * @param controller the RPC controller
    * @param request the request
-   * @throws ServiceException
+   * @deprecated Since 3.0.0, will be removed in 4.0.0. Not used any more, put here only for
+   *             compatibility with old region replica implementation. Now we will use
+   *             {@code replicateToReplica} method instead.
    */
+  @Deprecated
   @Override
   @QosPriority(priority = HConstants.REPLAY_QOS)
   public ReplicateWALEntryResponse replay(final RpcController controller,
-      final ReplicateWALEntryRequest request) throws ServiceException {
+    final ReplicateWALEntryRequest request) throws ServiceException {
     long before = EnvironmentEdgeManager.currentTime();
-    CellScanner cells = ((HBaseRpcController) controller).cellScanner();
+    CellScanner cells = getAndReset(controller);
     try {
       checkOpen();
       List<WALEntry> entries = request.getEntryList();
@@ -2172,6 +2194,41 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
     }
   }
 
+  /**
+   * Replay the given changes on a secondary replica
+   */
+  @Override
+  public ReplicateWALEntryResponse replicateToReplica(RpcController controller,
+    ReplicateWALEntryRequest request) throws ServiceException {
+    CellScanner cells = getAndReset(controller);
+    try {
+      checkOpen();
+      List<WALEntry> entries = request.getEntryList();
+      if (entries == null || entries.isEmpty()) {
+        // empty input
+        return ReplicateWALEntryResponse.newBuilder().build();
+      }
+      ByteString regionName = entries.get(0).getKey().getEncodedRegionName();
+      HRegion region = server.getRegionByEncodedName(regionName.toStringUtf8());
+      if (RegionReplicaUtil.isDefaultReplica(region.getRegionInfo())) {
+        throw new DoNotRetryIOException(
+          "Should not replicate to primary replica " + region.getRegionInfo() + ", CODE BUG?");
+      }
+      for (WALEntry entry : entries) {
+        if (!regionName.equals(entry.getKey().getEncodedRegionName())) {
+          throw new NotServingRegionException(
+            "ReplicateToReplica request contains entries from multiple " +
+              "regions. First region:" + regionName.toStringUtf8() + " , other region:" +
+              entry.getKey().getEncodedRegionName());
+        }
+        region.replayWALEntry(entry, cells);
+      }
+      return ReplicateWALEntryResponse.newBuilder().build();
+    } catch (IOException ie) {
+      throw new ServiceException(ie);
+    }
+  }
+
   private void checkShouldRejectReplicationRequest(List<WALEntry> entries) throws IOException {
     ReplicationSourceService replicationSource = server.getReplicationSourceService();
     if (replicationSource == null || entries.isEmpty()) {
@@ -2205,7 +2262,7 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
         requestCount.increment();
         List<WALEntry> entries = request.getEntryList();
         checkShouldRejectReplicationRequest(entries);
-        CellScanner cellScanner = ((HBaseRpcController) controller).cellScanner();
+        CellScanner cellScanner = getAndReset(controller);
         server.getRegionServerCoprocessorHost().preReplicateLogEntries();
         server.getReplicationSinkService().replicateLogEntries(entries, cellScanner,
           request.getReplicationClusterId(), request.getSourceBaseNamespaceDirPath(),
@@ -3250,7 +3307,7 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
     // This is cells inside a row. Default size is 10 so if many versions or many cfs,
     // then we'll resize. Resizings show in profiler. Set it higher than 10. For now
     // arbitrary 32. TODO: keep record of general size of results being returned.
-    List<Cell> values = new ArrayList<>(32);
+    ArrayList<Cell> values = new ArrayList<>(32);
     region.startRegionOperation(Operation.SCAN);
     long before = EnvironmentEdgeManager.currentTime();
     // Used to check if we've matched the row limit set on the Scan
@@ -3311,9 +3368,16 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
           // reset the batch progress between nextRaw invocations since we don't want the
           // batch progress from previous calls to affect future calls
           scannerContext.setBatchProgress(0);
+          assert values.isEmpty();
 
           // Collect values to be returned here
           moreRows = scanner.nextRaw(values, scannerContext);
+          if (context == null) {
+            // When there is no RpcCallContext,copy EC to heap, then the scanner would close,
+            // This can be an EXPENSIVE call. It may make an extra copy from offheap to onheap
+            // buffers.See more details in HBASE-26036.
+            CellUtil.cloneIfNecessary(values);
+          }
           numOfNextRawCalls++;
 
           if (!values.isEmpty()) {
@@ -3670,11 +3734,22 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
         if (context != null) {
           context.setCallBack(rsh.shippedCallback);
         } else {
-          // When context != null, adding back the lease will be done in callback set above.
-          addScannerLeaseBack(lease);
+          // If context is null,here we call rsh.shippedCallback directly to reuse the logic in
+          // rsh.shippedCallback to release the internal resources in rsh,and lease is also added
+          // back to regionserver's LeaseManager in rsh.shippedCallback.
+          runShippedCallback(rsh);
         }
       }
       quota.close();
+    }
+  }
+
+  private void runShippedCallback(RegionScannerHolder rsh) throws ServiceException {
+    assert rsh.shippedCallback != null;
+    try {
+      rsh.shippedCallback.run();
+    } catch (IOException ioe) {
+      throw new ServiceException(ioe);
     }
   }
 
@@ -3754,7 +3829,8 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
     long masterSystemTime = request.hasMasterSystemTime() ? request.getMasterSystemTime() : -1;
     for (RegionOpenInfo regionOpenInfo : request.getOpenInfoList()) {
       RegionInfo regionInfo = ProtobufUtil.toRegionInfo(regionOpenInfo.getRegion());
-      TableDescriptor tableDesc = tdCache.get(regionInfo.getTable());
+      TableName tableName = regionInfo.getTable();
+      TableDescriptor tableDesc = tdCache.get(tableName);
       if (tableDesc == null) {
         try {
           tableDesc = server.getTableDescriptors().get(regionInfo.getTable());
@@ -3765,6 +3841,9 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
           // TableDescriptor.
           LOG.warn("Failed to get TableDescriptor of {}, will try again in the handler",
             regionInfo.getTable(), e);
+        }
+        if(tableDesc != null) {
+          tdCache.put(tableName, tableDesc);
         }
       }
       if (regionOpenInfo.getFavoredNodesCount() > 0) {
@@ -3838,5 +3917,14 @@ public class RSRpcServices extends HBaseRpcServicesBase<HRegionServer>
     } catch (IOException e) {
       throw new ServiceException(e);
     }
+  }
+
+  @Override
+  public GetAllBootstrapNodesResponse getAllBootstrapNodes(RpcController controller,
+    GetAllBootstrapNodesRequest request) throws ServiceException {
+    GetAllBootstrapNodesResponse.Builder builder = GetAllBootstrapNodesResponse.newBuilder();
+    server.getBootstrapNodes()
+      .forEachRemaining(server -> builder.addNode(ProtobufUtil.toServerName(server)));
+    return builder.build();
   }
 }

@@ -27,7 +27,8 @@ import static org.apache.hadoop.hbase.client.ConnectionUtils.resetController;
 import static org.apache.hadoop.hbase.client.ConnectionUtils.translateException;
 import static org.apache.hadoop.hbase.client.ConnectionUtils.updateResultsMetrics;
 import static org.apache.hadoop.hbase.client.ConnectionUtils.updateServerSideMetrics;
-
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +37,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.apache.hadoop.hbase.CallQueueTooBigException;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionLocation;
 import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.UnknownScannerException;
@@ -49,11 +51,9 @@ import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hbase.thirdparty.com.google.common.base.Preconditions;
 import org.apache.hbase.thirdparty.io.netty.util.Timeout;
 import org.apache.hbase.thirdparty.io.netty.util.Timer;
-
 import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.shaded.protobuf.RequestConverter;
 import org.apache.hadoop.hbase.shaded.protobuf.ResponseConverter;
@@ -347,7 +347,7 @@ class AsyncScanSingleRegionRpcRetryingCaller {
 
   private void closeScanner() {
     incRPCCallsMetrics(scanMetrics, regionServerRemote);
-    resetController(controller, rpcTimeoutNs, priority);
+    resetController(controller, rpcTimeoutNs, HConstants.HIGH_QOS);
     ScanRequest req = RequestConverter.buildScanRequest(this.scannerId, 0, true, false);
     stub.scan(controller, req, resp -> {
       if (controller.failed()) {
@@ -572,7 +572,12 @@ class AsyncScanSingleRegionRpcRetryingCaller {
     resetController(controller, callTimeoutNs, priority);
     ScanRequest req = RequestConverter.buildScanRequest(scannerId, scan.getCaching(), false,
       nextCallSeq, scan.isScanMetricsEnabled(), false, scan.getLimit());
-    stub.scan(controller, req, resp -> onComplete(controller, resp));
+    final Context context = Context.current();
+    stub.scan(controller, req, resp -> {
+      try (Scope ignored = context.makeCurrent()) {
+        onComplete(controller, resp);
+      }
+    });
   }
 
   private void next() {

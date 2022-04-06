@@ -52,6 +52,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -119,6 +120,9 @@ import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.client.TableDescriptor;
 import org.apache.hadoop.hbase.client.TableDescriptorBuilder;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorHost;
+import org.apache.hadoop.hbase.coprocessor.MetaTableMetrics;
+import org.apache.hadoop.hbase.coprocessor.RegionCoprocessor;
+import org.apache.hadoop.hbase.coprocessor.RegionObserver;
 import org.apache.hadoop.hbase.exceptions.FailedSanityCheckException;
 import org.apache.hadoop.hbase.filter.BigDecimalComparator;
 import org.apache.hadoop.hbase.filter.BinaryComparator;
@@ -996,7 +1000,7 @@ public class TestHRegion {
             region.getRegionFileSystem().getStoreDir(Bytes.toString(family)));
 
       WALUtil.writeCompactionMarker(region.getWAL(), this.region.getReplicationScope(),
-          this.region.getRegionInfo(), compactionDescriptor, region.getMVCC());
+          this.region.getRegionInfo(), compactionDescriptor, region.getMVCC(), null);
 
       Path recoveredEditsDir = WALSplitUtil.getRegionDirRecoveredEditsDir(regiondir);
 
@@ -4446,6 +4450,23 @@ public class TestHRegion {
     }
   }
 
+  @Test
+  public void testScannerOperationId() throws IOException {
+    region = initHRegion(tableName, method, CONF, COLUMN_FAMILY_BYTES);
+    Scan scan = new Scan();
+    RegionScanner scanner = region.getScanner(scan);
+    assertNull(scanner.getOperationId());
+    scanner.close();
+
+    String operationId = "test_operation_id_0101";
+    scan = new Scan().setId(operationId);
+    scanner = region.getScanner(scan);
+    assertEquals(operationId, scanner.getOperationId());
+    scanner.close();
+
+    HBaseTestingUtil.closeRegionAndWAL(this.region);
+  }
+
   /**
    * Write an HFile block full with Cells whose qualifier that are identical between
    * 0 and Short.MAX_VALUE. See HBASE-13329.
@@ -5744,7 +5765,7 @@ public class TestHRegion {
       Collection<HStoreFile> storeFiles = primaryRegion.getStore(families[0]).getStorefiles();
       primaryRegion.getRegionFileSystem().removeStoreFiles(Bytes.toString(families[0]), storeFiles);
       Collection<StoreFileInfo> storeFileInfos = primaryRegion.getRegionFileSystem()
-          .getStoreFiles(families[0]);
+          .getStoreFiles(Bytes.toString(families[0]));
       Assert.assertTrue(storeFileInfos == null || storeFileInfos.isEmpty());
 
       verifyData(secondaryRegion, 0, 1000, cq, families);
@@ -7031,6 +7052,74 @@ public class TestHRegion {
   }
 
   @Test
+  public void testTTLsUsingSmallHeartBeatCells() throws IOException {
+    IncrementingEnvironmentEdge edge = new IncrementingEnvironmentEdge();
+    EnvironmentEdgeManager.injectEdge(edge);
+
+    final byte[] row = Bytes.toBytes("testRow");
+    final byte[] q1 = Bytes.toBytes("q1");
+    final byte[] q2 = Bytes.toBytes("q2");
+    final byte[] q3 = Bytes.toBytes("q3");
+    final byte[] q4 = Bytes.toBytes("q4");
+    final byte[] q5 = Bytes.toBytes("q5");
+    final byte[] q6 = Bytes.toBytes("q6");
+    final byte[] q7 = Bytes.toBytes("q7");
+    final byte[] q8 = Bytes.toBytes("q8");
+
+    // 10 seconds
+    int ttlSecs = 10;
+    TableDescriptor tableDescriptor =
+      TableDescriptorBuilder.newBuilder(TableName.valueOf(name.getMethodName())).setColumnFamily(
+        ColumnFamilyDescriptorBuilder.newBuilder(fam1).setTimeToLive(ttlSecs).build()).build();
+
+    Configuration conf = new Configuration(TEST_UTIL.getConfiguration());
+    conf.setInt(HFile.FORMAT_VERSION_KEY, HFile.MIN_FORMAT_VERSION_WITH_TAGS);
+    // using small heart beat cells
+    conf.setLong(StoreScanner.HBASE_CELLS_SCANNED_PER_HEARTBEAT_CHECK, 2);
+
+    region = HBaseTestingUtil
+      .createRegionAndWAL(RegionInfoBuilder.newBuilder(tableDescriptor.getTableName()).build(),
+        TEST_UTIL.getDataTestDir(), conf, tableDescriptor);
+    assertNotNull(region);
+    long now = EnvironmentEdgeManager.currentTime();
+    // Add a cell that will expire in 5 seconds via cell TTL
+    region.put(new Put(row).addColumn(fam1, q1, now, HConstants.EMPTY_BYTE_ARRAY));
+    region.put(new Put(row).addColumn(fam1, q2, now, HConstants.EMPTY_BYTE_ARRAY));
+    region.put(new Put(row).addColumn(fam1, q3, now, HConstants.EMPTY_BYTE_ARRAY));
+    // Add a cell that will expire after 10 seconds via family setting
+    region
+      .put(new Put(row).addColumn(fam1, q4, now + ttlSecs * 1000 + 1, HConstants.EMPTY_BYTE_ARRAY));
+    region
+      .put(new Put(row).addColumn(fam1, q5, now + ttlSecs * 1000 + 1, HConstants.EMPTY_BYTE_ARRAY));
+
+    region.put(new Put(row).addColumn(fam1, q6, now, HConstants.EMPTY_BYTE_ARRAY));
+    region.put(new Put(row).addColumn(fam1, q7, now, HConstants.EMPTY_BYTE_ARRAY));
+    region
+      .put(new Put(row).addColumn(fam1, q8, now + ttlSecs * 1000 + 1, HConstants.EMPTY_BYTE_ARRAY));
+
+    // Flush so we are sure store scanning gets this right
+    region.flush(true);
+
+    // A query at time T+0 should return all cells
+    checkScan(8);
+
+    // Increment time to T+ttlSecs seconds
+    edge.incrementTime(ttlSecs * 1000);
+    checkScan(3);
+  }
+
+  private void checkScan(int expectCellSize) throws IOException{
+    Scan s = new Scan().withStartRow(row);
+    ScannerContext.Builder contextBuilder = ScannerContext.newBuilder(true);
+    ScannerContext scannerContext = contextBuilder.build();
+    RegionScanner scanner = region.getScanner(s);
+    List<Cell> kvs = new ArrayList<>();
+    scanner.next(kvs, scannerContext);
+    assertEquals(expectCellSize, kvs.size());
+    scanner.close();
+  }
+
+  @Test
   public void testIncrementTimestampsAreMonotonic() throws IOException {
     region = initHRegion(tableName, method, CONF, fam1);
     ManualEnvironmentEdge edge = new ManualEnvironmentEdge();
@@ -7648,7 +7737,7 @@ public class TestHRegion {
             getCacheConfig() != null? getCacheConfig().shouldEvictOnClose(): true;
         for (Path newFile : newFiles) {
           // Create storefile around what we wrote with a reader on it.
-          HStoreFile sf = createStoreFileAndReader(newFile);
+          HStoreFile sf = storeEngine.createStoreFileAndReader(newFile);
           sf.closeStoreFile(evictOnClose);
           sfs.add(sf);
         }
@@ -7879,4 +7968,63 @@ public class TestHRegion {
     assertFalse("Region lock holder should not have been interrupted", holderInterrupted.get());
   }
 
+  @Test
+  public void testRegionOnCoprocessorsChange() throws IOException {
+    byte[] cf1 = Bytes.toBytes("CF1");
+    byte[][] families = { cf1 };
+
+    Configuration conf = new Configuration(CONF);
+    region = initHRegion(tableName, method, conf, families);
+    assertNull(region.getCoprocessorHost());
+
+    // set and verify the system coprocessors for region and user region
+    Configuration newConf = new Configuration(conf);
+    newConf.set(CoprocessorHost.REGION_COPROCESSOR_CONF_KEY,
+      MetaTableMetrics.class.getName());
+    newConf.set(CoprocessorHost.USER_REGION_COPROCESSOR_CONF_KEY,
+      NoOpRegionCoprocessor.class.getName());
+    // trigger configuration change
+    region.onConfigurationChange(newConf);
+    assertTrue(region.getCoprocessorHost() != null);
+    Set<String> coprocessors = region.getCoprocessorHost().getCoprocessors();
+    assertTrue(coprocessors.size() == 2);
+    assertTrue(region.getCoprocessorHost().getCoprocessors()
+      .contains(MetaTableMetrics.class.getSimpleName()));
+    assertTrue(region.getCoprocessorHost().getCoprocessors()
+      .contains(NoOpRegionCoprocessor.class.getSimpleName()));
+
+    // remove region coprocessor and keep only user region coprocessor
+    newConf.unset(CoprocessorHost.REGION_COPROCESSOR_CONF_KEY);
+    region.onConfigurationChange(newConf);
+    assertTrue(region.getCoprocessorHost() != null);
+    coprocessors = region.getCoprocessorHost().getCoprocessors();
+    assertTrue(coprocessors.size() == 1);
+    assertTrue(region.getCoprocessorHost().getCoprocessors()
+      .contains(NoOpRegionCoprocessor.class.getSimpleName()));
+  }
+
+  @Test
+  public void testRegionOnCoprocessorsWithoutChange() throws IOException {
+    byte[] cf1 = Bytes.toBytes("CF1");
+    byte[][] families = { cf1 };
+
+    Configuration conf = new Configuration(CONF);
+    conf.set(CoprocessorHost.REGION_COPROCESSOR_CONF_KEY,
+      MetaTableMetrics.class.getCanonicalName());
+    region = initHRegion(tableName, method, conf, families);
+    // region service is null in unit test, we need to load the coprocessor once
+    region.setCoprocessorHost(new RegionCoprocessorHost(region, null, conf));
+    RegionCoprocessor regionCoprocessor = region.getCoprocessorHost()
+      .findCoprocessor(MetaTableMetrics.class.getName());
+
+    // simulate when other configuration may have changed and onConfigurationChange execute once
+    region.onConfigurationChange(conf);
+    RegionCoprocessor regionCoprocessorAfterOnConfigurationChange = region.getCoprocessorHost()
+      .findCoprocessor(MetaTableMetrics.class.getName());
+    assertEquals(regionCoprocessor, regionCoprocessorAfterOnConfigurationChange);
+  }
+
+  public static class NoOpRegionCoprocessor implements RegionCoprocessor, RegionObserver {
+    // a empty region coprocessor class
+  }
 }

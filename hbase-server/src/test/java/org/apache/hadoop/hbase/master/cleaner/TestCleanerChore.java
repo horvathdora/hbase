@@ -22,7 +22,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
-import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -35,6 +35,7 @@ import org.apache.hadoop.hbase.HBaseTestingUtil;
 import org.apache.hadoop.hbase.Stoppable;
 import org.apache.hadoop.hbase.testclassification.MasterTests;
 import org.apache.hadoop.hbase.testclassification.SmallTests;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.CommonFSUtils;
 import org.apache.hadoop.hbase.util.StoppableImplementation;
 import org.junit.AfterClass;
@@ -61,7 +62,7 @@ public class TestCleanerChore {
 
   @BeforeClass
   public static void setup() {
-    POOL = new DirScanPool(UTIL.getConfiguration());
+    POOL = DirScanPool.getHFileCleanerScanPool(UTIL.getConfiguration());
   }
 
   @AfterClass
@@ -470,6 +471,57 @@ public class TestCleanerChore {
   }
 
   @Test
+  public void testOnConfigurationChangeLogCleaner() throws Exception {
+    int availableProcessorNum = Runtime.getRuntime().availableProcessors();
+    if (availableProcessorNum == 1) { // no need to run this test
+      return;
+    }
+
+    DirScanPool pool = DirScanPool.getLogCleanerScanPool(UTIL.getConfiguration());
+
+    // have at least 2 available processors/cores
+    int initPoolSize = availableProcessorNum / 2;
+    int changedPoolSize = availableProcessorNum;
+
+    Stoppable stop = new StoppableImplementation();
+    Configuration conf = UTIL.getConfiguration();
+    Path testDir = UTIL.getDataTestDir();
+    FileSystem fs = UTIL.getTestFileSystem();
+    String confKey = "hbase.test.cleaner.delegates";
+    conf.set(confKey, AlwaysDelete.class.getName());
+    conf.set(CleanerChore.LOG_CLEANER_CHORE_SIZE, String.valueOf(initPoolSize));
+    final AllValidPaths chore =
+        new AllValidPaths("test-file-cleaner", stop, conf, fs, testDir, confKey, pool);
+    chore.setEnabled(true);
+    // Create subdirs under testDir
+    int dirNums = 6;
+    Path[] subdirs = new Path[dirNums];
+    for (int i = 0; i < dirNums; i++) {
+      subdirs[i] = new Path(testDir, "subdir-" + i);
+      fs.mkdirs(subdirs[i]);
+    }
+    // Under each subdirs create 6 files
+    for (Path subdir : subdirs) {
+      createFiles(fs, subdir, 6);
+    }
+    // Start chore
+    Thread t = new Thread(new Runnable() {
+      @Override
+      public void run() {
+        chore.chore();
+      }
+    });
+    t.setDaemon(true);
+    t.start();
+    // Change size of chore's pool
+    conf.set(CleanerChore.LOG_CLEANER_CHORE_SIZE, String.valueOf(changedPoolSize));
+    pool.onConfigurationChange(conf);
+    assertEquals(changedPoolSize, chore.getChorePoolSize());
+    // Stop chore
+    t.join();
+  }
+
+  @Test
   public void testMinimumNumberOfThreads() throws Exception {
     Configuration conf = UTIL.getConfiguration();
     String confKey = "hbase.test.cleaner.delegates";
@@ -485,13 +537,12 @@ public class TestCleanerChore {
   }
 
   private void createFiles(FileSystem fs, Path parentDir, int numOfFiles) throws IOException {
-    Random random = new Random();
     for (int i = 0; i < numOfFiles; i++) {
-      int xMega = 1 + random.nextInt(3); // size of each file is between 1~3M
+      int xMega = 1 + ThreadLocalRandom.current().nextInt(3); // size of each file is between 1~3M
       try (FSDataOutputStream fsdos = fs.create(new Path(parentDir, "file-" + i))) {
         for (int m = 0; m < xMega; m++) {
           byte[] M = new byte[1024 * 1024];
-          random.nextBytes(M);
+          Bytes.random(M);
           fsdos.write(M);
         }
       }
